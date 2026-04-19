@@ -485,11 +485,6 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
             # Renomear colunas para padronização interna
             df = self._padronizar_colunas(df, params)
 
-            # ----------------------------------------------------------------
-            # CÁLCULO DE MÉTRICAS
-            # ----------------------------------------------------------------
-            df = self._calcular_metricas(df, params, feedback, nome_arquivo)
-
             # Identificar faixa
             df['Faixa'] = (
                 df['ID']
@@ -497,6 +492,11 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
                 .str.strip()
                 .str[params['faixa']['inicio']:params['faixa']['fim']]
             )
+
+            # ----------------------------------------------------------------
+            # CÁLCULO DE MÉTRICAS
+            # ----------------------------------------------------------------
+            df = self._calcular_metricas(df, params, feedback, nome_arquivo)
 
             # Validar se há faixas vazias
             faixas_vazias = df[df['Faixa'] == '']
