@@ -34,7 +34,7 @@ Esta etapa foca na análise do conteúdo da imagem propriamente dito que geralme
 ## Organização do Repositório
 
 * **scripts/01_conformidade_tecnica/**: Rotinas para extração de metadados e verificação dos parâmetros técnicos.
-* **scripts/02_analise_visual_dl/**: Scripts para pré-processamento, treinamento e inferência de modelos de análise visual.
+* **scripts/02_analise_visual/**: Scripts para pré-processamento, treinamento e inferência de modelos de análise visual.
 
 ---
 
