@@ -12,7 +12,7 @@ gdal.UseExceptions()
 
 def auditar_lote_imagens(diretorio):
     extensoes_imagem = ('.tif', '.tiff', '.geotif', '.geotiff')
-    extensoes_auxiliares = ('.aux', '.tfw', '.xml')
+    extensoes_auxiliares = ('.aux', '.tfw', '.xml', '.db', '.ini')
     
     arquivos_corrompidos = []
     arquivos_intrusos = [] # Lista que vai guardar o nome de cada arquivo errado
