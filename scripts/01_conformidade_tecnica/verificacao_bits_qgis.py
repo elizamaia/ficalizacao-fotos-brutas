@@ -3,13 +3,14 @@
 """
 MODELO DE SCRIPT PARA CAIXA DE FERRAMENTAS DO QGIS
 Contexto: Projeto de Mestrado - Eliza Silva Maia (PPEC/UFBA)
-Objetivo: Verificação de Conformidade Radiométrica (16 bits) em lote.
+Objetivo: Fiscalização de Profundidade de Bits (Customizável)
 """
 
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (QgsProcessing,
                        QgsProcessingAlgorithm,
                        QgsProcessingParameterFile,
+                       QgsProcessingParameterEnum,
                        QgsProcessingParameterFolderDestination,
                        QgsMessageLog)
 import os
@@ -19,13 +20,17 @@ from datetime import datetime
 
 class VerificarBitsAlgoritmo(QgsProcessingAlgorithm):
     """
-    Algoritmo para verificar recursivamente se imagens TIFF possuem 16 bits,
-    conforme os parâmetros de conformidade técnica da pesquisa.
+    Algoritmo para verificar conformidade de profundidade de bits em imagens TIFF.
+    Permite ao usuário definir o valor de referência para auditoria.
     """
 
     # Constantes dos Parâmetros
     PASTA_ENTRADA = 'PASTA_ENTRADA'
+    BITS_REFERENCIA = 'BITS_REFERENCIA'
     ARQUIVO_RELATORIO = 'ARQUIVO_RELATORIO'
+    
+    # Opções de bits para o usuário
+    OPCOES_BITS = ['4', '8', '16', '32', '64']
 
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
@@ -34,10 +39,10 @@ class VerificarBitsAlgoritmo(QgsProcessingAlgorithm):
         return VerificarBitsAlgoritmo()
 
     def name(self):
-        return 'verificar_conformidade_16bits'
+        return 'fiscalizacao_profundidade_bits'
 
     def displayName(self):
-        return self.tr('Fotos Brutas - Relatório - Profundidade de Bits')
+        return self.tr('Fotos Brutas - Imagem - Profundidade de Bits')
 
     def group(self):
         return self.tr('Fiscalização Mapeamento SEI')
@@ -46,8 +51,8 @@ class VerificarBitsAlgoritmo(QgsProcessingAlgorithm):
         return 'fiscalizacao_sei'
 
     def shortHelpString(self):
-        return self.tr("Verifica se os arquivos TIFF em uma pasta e subpastas são de 16 bits. "
-                       "Gera um relatório TXT detalhado com os resultados.")
+        return self.tr("Verifica recursivamente se os arquivos TIFF em uma pasta possuem a "
+                       "profundidade de bits selecionada. Gera um relatório de auditoria TXT.")
 
     def initAlgorithm(self, config=None):
         """
@@ -55,6 +60,7 @@ class VerificarBitsAlgoritmo(QgsProcessingAlgorithm):
         INICIALIZAÇÃO DE PARÂMETROS
         ========================================================================
         """
+        # Entrada: Pasta
         self.addParameter(
             QgsProcessingParameterFile(
                 self.PASTA_ENTRADA,
@@ -63,6 +69,17 @@ class VerificarBitsAlgoritmo(QgsProcessingAlgorithm):
             )
         )
 
+        # Entrada: Escolha da profundidade de bits
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                self.BITS_REFERENCIA,
+                self.tr('Profundidade de Bits Esperada'),
+                options=self.OPCOES_BITS,
+                defaultValue=2  # Valor padrão: 16 (index 2 na lista)
+            )
+        )
+
+        # Saída: Pasta do Relatório
         self.addParameter(
             QgsProcessingParameterFolderDestination(
                 self.ARQUIVO_RELATORIO,
@@ -79,14 +96,18 @@ class VerificarBitsAlgoritmo(QgsProcessingAlgorithm):
         pasta_mae = self.parameterAsString(parameters, self.PASTA_ENTRADA, context)
         pasta_saida = self.parameterAsString(parameters, self.ARQUIVO_RELATORIO, context)
         
-        caminho_txt = os.path.join(pasta_saida, 'relatorio_conformidade_bits.txt')
+        # Recupera o valor numérico dos bits selecionado pelo usuário
+        idx_bits = self.parameterAsInt(parameters, self.BITS_REFERENCIA, context)
+        valor_bits_alvo = int(self.OPCOES_BITS[idx_bits])
+        
+        caminho_txt = os.path.join(pasta_saida, f'relatorio_auditoria_{valor_bits_alvo}bits.txt')
         
         Image.MAX_IMAGE_PIXELS = None
-        arquivos_nao_16bit = []
+        arquivos_nao_conformes = []
         arquivos_com_erro = []
         total_verificados = 0
 
-        # Lista arquivos para o progresso
+        # Mapeamento de arquivos
         arquivos_tiff = []
         for root, _, files in os.walk(pasta_mae):
             for f in files:
@@ -95,8 +116,8 @@ class VerificarBitsAlgoritmo(QgsProcessingAlgorithm):
 
         total_arquivos = len(arquivos_tiff)
         if total_arquivos == 0:
-            feedback.reportError("Nenhum arquivo TIFF encontrado na pasta selecionada.")
-            return {self.ARQUIVO_RELATORIO: caminho_txt}
+            feedback.reportError("Nenhum arquivo TIFF encontrado.")
+            return {self.ARQUIVO_RELATORIO: pasta_saida}
 
         step = 100.0 / total_arquivos
 
@@ -109,60 +130,59 @@ class VerificarBitsAlgoritmo(QgsProcessingAlgorithm):
             
             try:
                 with Image.open(caminho_completo) as img:
-                    # Lógica de extração de metadados [cite: 150, 224]
+                    # Extração de metadados via PIL
                     meta_dict = {TAGS.get(key, key): img.tag_v2.get(key) for key in img.tag_v2}
-                    bits = meta_dict.get('BitsPerSample')
+                    bits_encontrados = meta_dict.get('BitsPerSample')
 
-                    if bits is None:
+                    if bits_encontrados is None:
                         arquivos_com_erro.append((rel_path, "Tag 'BitsPerSample' ausente"))
-                    elif self._validar_bits(bits) is False:
-                        arquivos_nao_16bit.append((rel_path, bits))
+                    elif not self._validar_bits(bits_encontrados, valor_bits_alvo):
+                        arquivos_nao_conformes.append((rel_path, bits_encontrados))
 
             except Exception as e:
                 arquivos_com_erro.append((rel_path, str(e)))
-                feedback.reportError(f"Erro no arquivo {rel_path}: {str(e)}")
 
             feedback.setProgress(int(i * step))
 
-        # Geração do Relatório Final
-        self._gerar_relatorio_txt(caminho_txt, pasta_mae, total_verificados, arquivos_nao_16bit, arquivos_com_erro)
-
-        feedback.pushInfo(f"Verificação concluída. Relatório salvo em: {caminho_txt}")
+        # Geração do Relatório
+        self._gerar_relatorio_txt(caminho_txt, pasta_mae, total_verificados, 
+                                 valor_bits_alvo, arquivos_nao_conformes, arquivos_com_erro)
 
         return {self.ARQUIVO_RELATORIO: caminho_txt}
 
-    def _validar_bits(self, bits_per_sample):
-        """Método auxiliar para validar a tupla ou inteiro de bits."""
-        if isinstance(bits_per_sample, tuple):
-            return all(b == 16 for b in bits_per_sample)
-        return bits_per_sample == 16
+    def _validar_bits(self, bits_lidos, valor_alvo):
+        """Compara o valor lido do arquivo com o alvo selecionado pelo usuário."""
+        if isinstance(bits_lidos, tuple):
+            return all(b == valor_alvo for b in bits_lidos)
+        return bits_lidos == valor_alvo
 
-    def _gerar_relatorio_txt(self, caminho, pasta, total, lista_falhas, lista_erros):
-        """Formata o relatório de saída conforme diretrizes de auditoria."""
+    def _gerar_relatorio_txt(self, caminho, pasta, total, alvo, lista_falhas, lista_erros):
+        """Formata o relatório final com as marcas de auditoria."""
         agora = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
         
         with open(caminho, 'w', encoding='utf-8') as f:
             f.write("==========================================================\n")
-            f.write("       RELATÓRIO DE CONFORMIDADE TÉCNICA - BITS\n")
-            f.write(f"       Data do Processamento: {agora}\n")
+            f.write("       RELATÓRIO DE FISCALIZAÇÃO - PROFUNDIDADE DE BITS\n")
+            f.write(f"       DATA: {agora}\n")
             f.write("==========================================================\n\n")
-            f.write(f"Pasta analisada: {pasta}\n")
-            f.write(f"Total de arquivos TIFF verificados: {total}\n\n")
+            f.write(f"Diretório: {pasta}\n")
+            f.write(f"Referência esperada: {alvo} bits\n")
+            f.write(f"Total de arquivos analisados: {total}\n\n")
 
             if not lista_falhas and not lista_erros:
-                f.write("✓ STATUS: Todos os arquivos estão em conformidade (16 bits).\n")
+                f.write("✓ STATUS: CONFORME. Todos os arquivos possuem a profundidade correta.\n")
             
             if lista_falhas:
-                f.write("[!] ALERTAS - ARQUIVOS FORA DA ESPECIFICAÇÃO (16-bit):\n")
+                f.write(f"[!] ALERTAS - FORA DA ESPECIFICAÇÃO (Não possuem {alvo} bits):\n")
                 f.write("-" * 60 + "\n")
                 for path, bit in lista_falhas:
-                    f.write(f"- {path} | Bits encontrados: {bit}\n")
+                    f.write(f"- {path} | Encontrado: {bit}\n")
                 f.write("\n")
 
             if lista_erros:
-                f.write("[X] ERROS DE PROCESSAMENTO/ARQUIVOS CORROMPIDOS:\n")
+                f.write("[X] ERROS CRÍTICOS (Arquivos ilegíveis ou metadados corrompidos):\n")
                 f.write("-" * 60 + "\n")
                 for path, erro in lista_erros:
                     f.write(f"- {path} | Erro: {erro}\n")
 
-            f.write("\n--- Fim do Relatório ---")
+            f.write("\n--- Gerado automaticamente pelo sistema de Fiscalização SEI ---")
