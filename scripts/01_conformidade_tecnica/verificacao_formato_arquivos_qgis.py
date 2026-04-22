@@ -1,67 +1,94 @@
 import os
 from osgeo import gdal
 
+
 # ==========================================
 # INSIRA O CAMINHO DA SUA PASTA AQUI ABAIXO
 # ==========================================
-pasta_alvo = r"Y:\LOTE01\FOTO\ENT_01\REV_00\RGB_16bits"
-
+pasta_alvo = r"Y:\LOTE01\FOTO\ENT_01\REV_00\RGB_16bits\20230820"
 
 gdal.UseExceptions()
 
-def verificar_integridade_imagens_v2(diretorio):
+def auditar_lote_imagens(diretorio):
     extensoes_alvo = ('.tif', '.tiff', '.geotif', '.geotiff')
-    arquivos_invalidos = []
-    total_verificados = 0
+    
+    arquivos_corrompidos = []
+    intrusos_por_extensao = {} # Vai contar quantos arquivos de cada formato errado existem
+    
+    total_tifs_verificados = 0
+    total_intrusos = 0
     pastas_lidas = 0
 
-    print(f"Iniciando varredura profunda no diretório:\n{diretorio}\n")
+    print(f"Iniciando auditoria completa no diretório:\n{diretorio}\n")
     print("Aguarde, processando a árvore de pastas...\n")
 
-    # O parâmetro followlinks=True força o Python a entrar em links simbólicos/atalhos de rede
     for raiz, _, arquivos in os.walk(diretorio, followlinks=True):
         pastas_lidas += 1
         
-        # DESCOMENTE A LINHA ABAIXO (remova o #) se quiser ver no console cada pasta que ele acessa:
-        # print(f"Lendo: {raiz} -> {len(arquivos)} arquivo(s) no total (todas as extensões)")
-
         for arquivo in arquivos:
-            if arquivo.lower().endswith(extensoes_alvo):
-                total_verificados += 1
-                caminho_completo = os.path.join(raiz, arquivo)
+            caminho_completo = os.path.join(raiz, arquivo)
+            
+            # Pega a extensão do arquivo (ex: '.jpeg', '.txt')
+            extensao = os.path.splitext(arquivo)[1].lower()
+            
+            # Se não tem extensão, agrupa como 'sem extensão'
+            if not extensao:
+                extensao = "[sem extensão]"
+
+            # SE FOR TIFF -> Faz a validação profunda com GDAL
+            if extensao in extensoes_alvo:
+                total_tifs_verificados += 1
                 
                 try:
                     dataset = gdal.Open(caminho_completo, gdal.GA_ReadOnly)
                     if dataset is None:
-                        arquivos_invalidos.append((caminho_completo, "O GDAL não conseguiu abrir o arquivo."))
+                        arquivos_corrompidos.append((caminho_completo, "O GDAL não conseguiu abrir o arquivo."))
                         continue
                         
                     if dataset.RasterCount == 0:
-                        arquivos_invalidos.append((caminho_completo, "O arquivo foi aberto, mas não possui bandas (RasterCount = 0)."))
+                        arquivos_corrompidos.append((caminho_completo, "O arquivo não possui bandas (RasterCount = 0)."))
                     
                     dataset = None
                     
                 except Exception as e:
                     erro_msg = str(e).strip()
-                    arquivos_invalidos.append((caminho_completo, f"Erro GDAL: {erro_msg}"))
+                    arquivos_corrompidos.append((caminho_completo, f"Erro GDAL: {erro_msg}"))
+            
+            # SE NÃO FOR TIFF -> É um formato intruso/incorreto
+            else:
+                total_intrusos += 1
+                if extensao in intrusos_por_extensao:
+                    intrusos_por_extensao[extensao] += 1
+                else:
+                    intrusos_por_extensao[extensao] = 1
 
-    # --- GERAÇÃO DO RELATÓRIO ---
-    print("\n" + "=" * 50)
-    print(" " * 12 + "RELATÓRIO DE VARREDURA")
-    print("=" * 50)
-    print(f"Total de pastas verificadas: {pastas_lidas}")
-    print(f"Total de imagens TIF/GeoTIFF verificadas: {total_verificados}\n")
+    # --- GERAÇÃO DO RELATÓRIO DE AUDITORIA ---
+    print("=" * 60)
+    print(" " * 15 + "RELATÓRIO DE AUDITORIA DE ENTREGA")
+    print("=" * 60)
+    print(f"Pastas verificadas: {pastas_lidas}")
+    print(f"Imagens TIF/GeoTIFF avaliadas: {total_tifs_verificados}")
+    print(f"Arquivos em OUTROS formatos (Intrusos): {total_intrusos}")
+    print("-" * 60)
     
-    if total_verificados == 0:
-        print("Resultado: Nenhuma imagem encontrada. Verifique se as imagens estão baixadas localmente (não apenas na nuvem) ou questões de permissão.")
-    elif not arquivos_invalidos:
-        print("Resultado: SUCESSO! Todas as imagens verificadas estão no formato correto.")
+    # 1. Avaliação dos Intrusos (Formatos errados)
+    if total_intrusos > 0:
+        print("⚠️ ALERTA: Foram encontrados arquivos fora do formato padrão (.tif):")
+        for ext, quantidade in intrusos_por_extensao.items():
+            print(f"   -> {quantidade} arquivo(s) com formato {ext}")
+        print("-" * 60)
+    
+    # 2. Avaliação dos TIFFs (Corrompidos)
+    if total_tifs_verificados == 0:
+        print("❌ FALHA CRÍTICA: Nenhuma imagem TIF/GeoTIFF foi encontrada no lote.")
+    elif arquivos_corrompidos:
+        print(f"❌ ATENÇÃO: Encontrados {len(arquivos_corrompidos)} TIFF(s) corrompido(s) ou inválido(s):")
+        for arq, motivo in arquivos_corrompidos:
+            print(f"   -> Arquivo: {arq}")
+            print(f"      Motivo: {motivo}")
     else:
-        print(f"Resultado: ATENÇÃO! Foram encontrados problemas em {len(arquivos_invalidos)} arquivo(s):\n")
-        for arq, motivo in arquivos_invalidos:
-            print(f"-> Arquivo: {arq}")
-            print(f"   Motivo: {motivo}\n")
-    print("=" * 50)
+        print("✅ SUCESSO: Todos os TIFFs/GeoTIFFs entregues estão íntegros e abrem perfeitamente.")
+        
+    print("=" * 60)
 
-# Executa a função
-verificar_integridade_imagens_v2(pasta_alvo)
+auditar_lote_imagens(pasta_alvo)
