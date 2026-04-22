@@ -1,135 +1,250 @@
 # -*- coding: utf-8 -*-
 
 """
-SCRIPT PARA VERIFICAR O EPSG DE IMAGENS TIFF EM LOTE (COM SUBPASTAS)
-======================================================================
-COMO USAR:
-1. Copie e cole este código no terminal Python do QGIS (Plugins > Terminal Python).
-2. Altere o caminho na variável 'caminho_da_pasta_mae' abaixo.
-3. O script irá verificar esta pasta e TODAS as suas subpastas.
-4. O EPSG desejado já está definido como 4674 (SIRGAS 2000), mas pode ser alterado.
-5. Clique em 'Executar Script'. A lista de arquivos será impressa no console.
+Plugin QGIS para Verificação de Conformidade de Sistema de Referência (EPSG)
+
+Este algoritmo realiza a varredura recursiva em pastas para validar se as imagens 
+fotogramétricas (TIFF/GeoTIFF) possuem o sistema de referência de coordenadas (CRS) 
+especificado pelo usuário. Esta é uma etapa crucial do Controle de Qualidade 
+Integrado (CQI) para evitar a propagação de erros posicionais.
+
+Baseado nas normativas de qualidade cartográfica (ET-EDGV) citadas no Projeto 
+de Mestrado de Eliza Silva Maia (UFBA).
+
+Cálculos:
+    - Extração de metadados via GDAL (osgeo).
+    - Comparação de Authority ID (EPSG) entre o arquivo e o parâmetro alvo.
+
+Autor: Mestrado - Scripts para QGIS (Agente Gerador)
+Data: 22/04/2026
 """
 
+from qgis.core import (
+    QgsProcessing,
+    QgsProcessingAlgorithm,
+    QgsProcessingParameterFile,
+    QgsProcessingParameterCrs,
+    QgsProcessingParameterFileDestination,
+    QgsProcessingException,
+    QgsCoordinateReferenceSystem
+)
+from qgis.PyQt.QtCore import QCoreApplication
 import os
-# A biblioteca 'osgeo' (GDAL/OGR) é padrão no QGIS.
 from osgeo import gdal, osr
-
-# --------------------------------------------------------------------------
-# ▼▼▼ EDITAR AQUI ▼▼▼
-# Cole o caminho completo para a sua pasta MÃE abaixo.
-caminho_da_pasta_mae = r'Z:\LOTE01\ORTO\ENT_04A\REV_00\RGIR'
-
-# Defina o código EPSG que você deseja verificar.
-epsg_desejado = 4674
-# ▲▲▲ EDITAR AQUI ▲▲▲
-# --------------------------------------------------------------------------
+from datetime import datetime
 
 
-def verificar_epsg_tiff_recursivo(pasta_mae, epsg_alvo):
+class VerificacaoEpsgImagens(QgsProcessingAlgorithm):
     """
-    Verifica recursivamente o CRS de todos os arquivos TIFF em uma pasta mãe
-    e suas subpastas, comparando com um EPSG alvo.
+    Algoritmo de auditoria de EPSG para imagens brutas.
     """
-    if not os.path.isdir(pasta_mae):
-        print(f"ERRO: O caminho especificado não é uma pasta válida: '{pasta_mae}'")
-        return
 
-    print(f"Iniciando verificação de EPSG na pasta mãe: {pasta_mae}")
-    print(f"Procurando por arquivos com EPSG: {epsg_alvo} (SIRGAS 2000)\n")
-    
-    # Listas para categorizar os arquivos
-    arquivos_corretos = []
-    arquivos_com_epsg_diferente = []
-    arquivos_sem_epsg = []
-    arquivos_com_erro = []
-    total_verificados = 0
+    # Constantes de Parâmetros
+    INPUT_FOLDER = 'INPUT_FOLDER'
+    TARGET_CRS = 'TARGET_CRS'
+    OUTPUT_REPORT = 'OUTPUT_REPORT'
 
-    # Desativa o log de erros do GDAL no console para uma saída mais limpa
-    gdal.UseExceptions()
-    gdal.PushErrorHandler('CPLQuietErrorHandler')
+    def tr(self, string):
+        return QCoreApplication.translate('Processing', string)
 
-    for dirpath, _, filenames in os.walk(pasta_mae):
-        for nome_arquivo in filenames:
-            if nome_arquivo.lower().endswith(('.tif', '.tiff')):
-                total_verificados += 1
-                caminho_completo = os.path.join(dirpath, nome_arquivo)
-                caminho_relativo = os.path.relpath(caminho_completo, pasta_mae)
+    def createInstance(self):
+        return VerificacaoEpsgImagens()
+
+    def name(self):
+        return 'verificacao_epsg_fotos'
+
+    def displayName(self):
+        return self.tr("Fotos Brutas - Imagem - Sistema de Referência (EPSG)")
+
+    def group(self):
+        return self.tr('Fiscalização Mapeamento SEI')
+
+    def groupId(self):
+        return 'fiscalizacao_sei'
+
+    def shortHelpString(self):
+        return self.tr("Varre pastas e subpastas em busca de arquivos TIFF/GeoTIFF, "
+                       "verificando se o EPSG corresponde ao sistema alvo definido.")
+
+    def initAlgorithm(self, config=None):
+        """
+        Define a interface de entrada e saída.
+        """
+        # ======================================
+        # INICIALIZAÇÃO DE PARÂMETROS
+        # ======================================
+
+        # Pasta de Entrada
+        self.addParameter(
+            QgsProcessingParameterFile(
+                self.INPUT_FOLDER,
+                self.tr("Selecione a pasta raiz das imagens"),
+                behavior=QgsProcessingParameterFile.Folder
+            )
+        )
+
+        # EPSG Alvo (Lista do QGIS)
+        self.addParameter(
+            QgsProcessingParameterCrs(
+                self.TARGET_CRS,
+                self.tr("Sistema de Referência (CRS) esperado"),
+                defaultValue='EPSG:4674'  # SIRGAS 2000 como padrão
+            )
+        )
+
+        # Arquivo de Saída (.txt)
+        self.addParameter(
+            QgsProcessingParameterFileDestination(
+                self.OUTPUT_REPORT,
+                self.tr("Caminho para o Relatório de Auditoria (.txt)"),
+                fileFilter='Text files (*.txt)'
+            )
+        )
+
+    def processAlgorithm(self, parameters, context, feedback):
+        """
+        Execução central do processamento.
+        """
+        pasta_raiz = self.parameterAsString(parameters, self.INPUT_FOLDER, context)
+        crs_alvo_obj = self.parameterAsCrs(parameters, self.TARGET_CRS, context)
+        caminho_relatorio = self.parameterAsFileOutput(parameters, self.OUTPUT_REPORT, context)
+
+        # Extrair apenas o código numérico (ex: 4674)
+        epsg_alvo = crs_alvo_obj.postgisSrid()
+
+        # Coleta de arquivos
+        arquivos_tiff = self._listar_arquivos_tiff(pasta_raiz)
+        total_arquivos = len(arquivos_tiff)
+
+        if total_arquivos == 0:
+            raise QgsProcessingException(self.tr("Nenhum arquivo TIFF encontrado na pasta informada."))
+
+        feedback.pushInfo(f"Iniciando verificação em {total_arquivos} arquivos...")
+
+        # Estruturas de dados para o relatório
+        resultados = {
+            'corretos': [],
+            'divergentes': [],
+            'sem_crs': [],
+            'erros': []
+        }
+
+        # Loop de processamento com tratamento de erros (Try/Except)
+        for i, caminho in enumerate(arquivos_tiff):
+            if feedback.isCanceled():
+                break
+
+            try:
+                # Logica de verificação
+                status, info = self._verificar_epsg_imagem(caminho, epsg_alvo)
                 
-                try:
-                    dataset = gdal.Open(caminho_completo, gdal.GA_ReadOnly)
-                    if dataset is None:
-                        arquivos_com_erro.append((caminho_relativo, "GDAL não conseguiu abrir o arquivo."))
-                        continue
-                    
-                    # Pega a projeção em formato WKT (Well-Known Text)
-                    wkt = dataset.GetProjection()
-                    
-                    if not wkt:
-                        arquivos_sem_epsg.append(caminho_relativo)
-                    else:
-                        # Cria um objeto de referência espacial a partir do WKT
-                        spatial_ref = osr.SpatialReference()
-                        spatial_ref.ImportFromWkt(wkt)
-                        
-                        # Tenta extrair o código EPSG
-                        codigo_epsg_encontrado = spatial_ref.GetAuthorityCode(None)
-                        if codigo_epsg_encontrado:
-                            codigo_epsg_encontrado = int(codigo_epsg_encontrado) # Converte para número
+                if status == 'CORRETO':
+                    resultados['corretos'].append(caminho)
+                elif status == 'DIVERGENTE':
+                    resultados['divergentes'].append({'path': caminho, 'encontrado': info})
+                elif status == 'SEM_CRS':
+                    resultados['sem_crs'].append(caminho)
+                
+            except Exception as e:
+                feedback.reportError(f"Falha crítica no arquivo {caminho}: {str(e)}")
+                resultados['erros'].append({'path': caminho, 'msg': str(e)})
 
-                        # Compara com o EPSG alvo
-                        if codigo_epsg_encontrado == epsg_alvo:
-                            arquivos_corretos.append(caminho_relativo)
-                        else:
-                            nome_srs = spatial_ref.GetAuthorityName(None) or "N/A"
-                            info_encontrada = f"EPSG:{codigo_epsg_encontrado} ({nome_srs})"
-                            arquivos_com_epsg_diferente.append((caminho_relativo, info_encontrada))
-                    
-                    # Libera o arquivo
-                    dataset = None
+            # Atualiza barra de progresso
+            feedback.setProgress(int((i / total_arquivos) * 100))
 
-                except Exception as e:
-                    arquivos_com_erro.append((caminho_relativo, str(e)))
+        # Geração e Escrita do Relatório
+        conteudo_relatorio = self._gerar_conteudo_relatorio(
+            pasta_raiz, epsg_alvo, resultados, total_arquivos
+        )
+        self._escrever_relatorio(caminho_relatorio, conteudo_relatorio)
 
-    # Reativa o log de erros padrão
-    gdal.PopErrorHandler()
+        feedback.pushInfo(f"Relatório gerado com sucesso em: {caminho_relatorio}")
 
-    # --- Exibição dos Resultados ---
-    print("==================================================")
-    print("          RESULTADO DA VERIFICAÇÃO DE EPSG")
-    print("==================================================")
-    print(f"Total de arquivos TIFF verificados: {total_verificados}\n")
+        return {self.OUTPUT_REPORT: caminho_relatorio}
 
-    if arquivos_com_epsg_diferente:
-        print(f"🟡 ATENÇÃO: Arquivos com EPSG diferente de {epsg_alvo}:")
-        print("--------------------------------------------------------------------------")
-        for caminho, epsg_info in arquivos_com_epsg_diferente:
-            print(f"- Arquivo: {caminho:<50} | Encontrado: {epsg_info}")
-        print("--------------------------------------------------------------------------\n")
+    # ======================================
+    # MÉTODOS AUXILIARES PRIVADOS
+    # ======================================
 
-    if arquivos_sem_epsg:
-        print("🟠 ATENÇÃO: Arquivos sem sistema de referência de coordenadas (CRS) definido:")
-        print("--------------------------------------------------------------------------")
-        for caminho in arquivos_sem_epsg:
-            print(f"- Arquivo: {caminho}")
-        print("--------------------------------------------------------------------------\n")
+    def _listar_arquivos_tiff(self, pasta):
+        """Varre recursivamente a pasta em busca de extensões TIFF."""
+        lista = []
+        for raiz, _, arquivos in os.walk(pasta):
+            for arquivo in arquivos:
+                if arquivo.lower().endswith(('.tif', '.tiff', '.geotiff')):
+                    lista.append(os.path.join(raiz, arquivo))
+        return lista
+
+    def _verificar_epsg_imagem(self, caminho, epsg_alvo):
+        """Abre a imagem via GDAL e valida o EPSG."""
+        dataset = gdal.Open(caminho, gdal.GA_ReadOnly)
+        if not dataset:
+            raise Exception("Não foi possível abrir o arquivo via GDAL.")
+
+        proj_wkt = dataset.GetProjection()
+        dataset = None  # Fecha o arquivo
+
+        if not proj_wkt:
+            return 'SEM_CRS', None
+
+        srs = osr.SpatialReference()
+        srs.ImportFromWkt(proj_wkt)
         
-    if arquivos_com_erro:
-        print("🔴 ERRO: Não foi possível processar os seguintes arquivos:")
-        print("--------------------------------------------------------------------------")
-        for caminho, erro in arquivos_com_erro:
-            print(f"- Arquivo: {caminho:<50} | Motivo: {erro}")
-        print("--------------------------------------------------------------------------\n")
-    
-    num_corretos = len(arquivos_corretos)
-    if num_corretos > 0:
-        print(f"✅ Boa notícia: {num_corretos} arquivo(s) está(ão) com o EPSG {epsg_alvo} correto.")
-    
-    if num_corretos == total_verificados and total_verificados > 0:
-        print("\n🎉 Perfeito! Todos os arquivos TIFF verificados estão com o CRS correto!")
+        # Tenta recuperar o código EPSG (Authority ID)
+        epsg_encontrado = srs.GetAttrValue("AUTHORITY", 1)
 
-    print("\nVerificação de EPSG concluída.")
+        if epsg_encontrado and int(epsg_encontrado) == epsg_alvo:
+            return 'CORRETO', epsg_encontrado
+        else:
+            return 'DIVERGENTE', epsg_encontrado if epsg_encontrado else "Desconhecido"
 
+    def _gerar_conteudo_relatorio(self, pasta, alvo, res, total):
+        """Formata o texto final do relatório conforme padrões de auditoria."""
+        agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        
+        linhas = [
+            "==========================================================================",
+            "        RELATÓRIO DE AUDITORIA TÉCNICA - CONFORMIDADE DE EPSG",
+            "==========================================================================",
+            f"Data de Execução: {agora}",
+            f"Pasta Analisada:  {pasta}",
+            f"EPSG Esperado:    EPSG:{alvo}",
+            f"Total de Arquivos: {total}",
+            "--------------------------------------------------------------------------\n",
+            "RESUMO DA VALIDAÇÃO:",
+            f"  - Corretos:      {len(res['corretos'])}",
+            f"  - Divergentes:   {len(res['divergentes'])}",
+            f"  - Sem CRS:       {len(res['sem_crs'])}",
+            f"  - Falhas Leitura: {len(res['erros'])}",
+            "\n==========================================================================",
+            "DETALHAMENTO DOS ALERTAS E ERROS",
+            "=========================================================================="
+        ]
 
-# --- Execução do Script ---
-verificar_epsg_tiff_recursivo(caminho_da_pasta_mae, epsg_desejado)
+        if res['divergentes']:
+            linhas.append("\n[!] ARQUIVOS COM EPSG DIVERGENTE:")
+            for item in res['divergentes']:
+                linhas.append(f"  - {item['path']} | Encontrado: {item['encontrado']}")
+
+        if res['sem_crs']:
+            linhas.append("\n[!] ARQUIVOS SEM SISTEMA DE COORDENADAS DEFINIDO:")
+            for item in res['sem_crs']:
+                linhas.append(f"  - {item['path']}")
+
+        if res['erros']:
+            linhas.append("\n[!] ERROS DE PROCESSAMENTO (ARQUIVOS CORROMPIDOS OU BLOQUEADOS):")
+            for item in res['erros']:
+                linhas.append(f"  - {item['path']} | Erro: {item['msg']}")
+
+        if not res['divergentes'] and not res['sem_crs'] and not res['erros']:
+            linhas.append("\n✓ SUCESSO: Todos os arquivos estão em conformidade com o EPSG alvo.")
+
+        linhas.append("\n--------------------------------------------------------------------------")
+        linhas.append("Fim do Relatório.")
+        
+        return "\n".join(linhas)
+
+    def _escrever_relatorio(self, caminho, conteudo):
+        """Salva a string do relatório no arquivo físico."""
+        with open(caminho, 'w', encoding='utf-8') as f:
+            f.write(conteudo)
