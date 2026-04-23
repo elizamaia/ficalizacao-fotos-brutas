@@ -14,7 +14,7 @@ Regras de Auditoria:
     - Análise Lateral Robusta: Utiliza UnaryUnion para tratar faixas adjacentes.
 
 Autor: Mestrado - Scripts para QGIS (Agente Gerador)
-Data: 23/04/2026
+Data: 22/04/2026
 """
 
 from qgis.core import (
@@ -30,7 +30,9 @@ from qgis.core import (
     QgsField,
     QgsSpatialIndex,
     QgsGeometry,
-    QgsUnitTypes
+    QgsPointXY,
+    QgsUnitTypes,
+    QgsFeatureSink
 )
 from qgis.PyQt.QtCore import QCoreApplication, QVariant
 import os
@@ -114,7 +116,7 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
             raise QgsProcessingException(self.tr("ERRO: A camada deve estar em coordenadas UTM (Métricas). O CRS atual é Geográfico."))
         
         if source.crs().mapUnits() != QgsUnitTypes.DistanceMeters:
-             raise QgsProcessingException(self.tr("ERRO: A unidade do CRS deve ser metros."))
+             raise QgsProcessingException(self.tr("ERRO: A unidade do CRS deve ser metros. Verifique a projeção do vetor."))
 
         # Limites Calculados
         lim_long = (long_alvo - tolerancia, long_alvo + tolerancia)
@@ -143,14 +145,16 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
 
             geom = feat.geometry()
             centroide = geom.centroid().asPoint()
-            area_ref = geom.area()
-            nome_foto = str(feat[campo_id])
+            fid = feat.id()
+            
+            # Tratamento caso o campo seja nulo
+            nome_foto = str(feat[campo_id]) if feat[campo_id] else f"Feição_{fid}"
             
             # Cálculos de Sobreposição (N, S, L, O)
-            val_n = self._calc_overlap(geom, centroide, index, features, 'N')
-            val_s = self._calc_overlap(geom, centroide, index, features, 'S')
-            val_l = self._calc_overlap_lateral(geom, centroide, index, features, 'L')
-            val_o = self._calc_overlap_lateral(geom, centroide, index, features, 'O')
+            val_n = self._calc_overlap(geom, centroide, index, features, 'N', fid)
+            val_s = self._calc_overlap(geom, centroide, index, features, 'S', fid)
+            val_l = self._calc_overlap_lateral(geom, centroide, index, features, 'L', fid)
+            val_o = self._calc_overlap_lateral(geom, centroide, index, features, 'O', fid)
 
             # Lógica de QC com Tolerância
             status_long = self._validar(max(val_n, val_s), lim_long)
@@ -158,8 +162,8 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
 
             # Registro para o Relatório
             erros = []
-            if status_long: erros.append(f"Longitudinal ({max(val_n, val_s):.1f}%)")
-            if status_lat: erros.append(f"Lateral ({max(val_l, val_o):.1f}%)")
+            if status_long: erros.append(f"Longitudinal ({max(val_n, val_s):.1f}%) -> {status_long}")
+            if status_lat: erros.append(f"Lateral ({max(val_l, val_o):.1f}%) -> {status_lat}")
             
             if erros:
                 reprovacoes[nome_foto] = erros
@@ -188,41 +192,46 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
 
     def _validar(self, valor, limites):
         """Verifica se o valor está fora do intervalo de tolerância."""
-        if valor < limites[0]: return "Reprovado (Baixa)"
-        if valor > limites[1]: return "Reprovado (Alta)"
+        if valor < limites[0]: return "Reprovado (Abaixo da Tolerância)"
+        if valor > limites[1]: return "Reprovado (Acima da Tolerância)"
         return None
 
-    def _calc_overlap(self, geom, centro, index, all_feats, direcao):
+    def _calc_overlap(self, geom, centro, index, all_feats, direcao, fid):
         """Cálculo longitudinal (Simplificado por vizinho mais próximo na direção)."""
         offset = 50 # metros para busca de vizinho
-        ponto_busca = None
-        if direcao == 'N': ponto_busca = QgsGeometry.fromPointXY(centro).translate(0, offset)
-        elif direcao == 'S': ponto_busca = QgsGeometry.fromPointXY(centro).translate(0, -offset)
         
-        if not ponto_busca: return 0.0
+        if direcao == 'N': pt = QgsPointXY(centro.x(), centro.y() + offset)
+        elif direcao == 'S': pt = QgsPointXY(centro.x(), centro.y() - offset)
+        else: return 0.0
         
+        ponto_busca = QgsGeometry.fromPointXY(pt)
         ids_vizinhos = index.intersects(ponto_busca.boundingBox())
+        
         inter_area = 0.0
         for vid in ids_vizinhos:
-            vizinho = next(f for f in all_feats if f.id() == vid)
-            if vizinho.id() == index: continue # Pula a própria
-            if vizinho.geometry().intersects(geom):
+            if vid == fid: continue # Pula a si mesma
+            vizinho = next((f for f in all_feats if f.id() == vid), None)
+            if vizinho and vizinho.geometry().intersects(geom):
                 inter_area = max(inter_area, vizinho.geometry().intersection(geom).area())
         
         return (inter_area / geom.area()) * 100 if geom.area() > 0 else 0
 
-    def _calc_overlap_lateral(self, geom, centro, index, all_feats, direcao):
+    def _calc_overlap_lateral(self, geom, centro, index, all_feats, direcao, fid):
         """Cálculo lateral usando UnaryUnion para robustez."""
         offset = 500 # busca maior para lateral
-        ponto_busca = None
-        if direcao == 'L': ponto_busca = QgsGeometry.fromPointXY(centro).translate(offset, 0)
-        elif direcao == 'O': ponto_busca = QgsGeometry.fromPointXY(centro).translate(-offset, 0)
         
+        if direcao == 'L': pt = QgsPointXY(centro.x() + offset, centro.y())
+        elif direcao == 'O': pt = QgsPointXY(centro.x() - offset, centro.y())
+        else: return 0.0
+        
+        ponto_busca = QgsGeometry.fromPointXY(pt)
         ids_vizinhos = index.intersects(ponto_busca.boundingBox())
+        
         geometrias_intersecao = []
         for vid in ids_vizinhos:
-            vizinho = next(f for f in all_feats if f.id() == vid)
-            if vizinho.geometry().intersects(geom):
+            if vid == fid: continue # Pula a si mesma
+            vizinho = next((f for f in all_feats if f.id() == vid), None)
+            if vizinho and vizinho.geometry().intersects(geom):
                 geometrias_intersecao.append(vizinho.geometry().intersection(geom))
         
         if not geometrias_intersecao: return 0.0
@@ -237,7 +246,7 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
             f.write("       RELATÓRIO DE AUDITORIA DE SOBREPOSIÇÃO ESPACIAL\n")
             f.write("===============================================================\n")
             f.write(f"Data: {agora}\n")
-            f.write(f"Configuração Alvo: Longitudinal {long}% | Lateral {lat}% (Tol ±{tol}%)\n")
+            f.write(f"Configuração Alvo: Longitudinal {long}% | Lateral {lat}% (Tolerância ±{tol}%)\n")
             f.write(f"Total de Fotos com Inconformidade: {len(reprovacoes)}\n")
             f.write("---------------------------------------------------------------\n\n")
 
