@@ -1,161 +1,253 @@
-#---ATENÇÃO---
-#O vetor deve estar em UTM
+# -*- coding: utf-8 -*-
 
-# --- INÍCIO DO CÓDIGO v6 (Correção no Merge Leste/Oeste) ---
+"""
+Plugin QGIS para Análise Espacial de Sobreposição (Longitudinal e Lateral)
 
-import math
+Este algoritmo automatiza a verificação geométrica do recobrimento entre fotos 
+aéreas brutas. Diferente de verificações de metadados, este script realiza 
+cálculos de interseção espacial entre polígonos (footprints).
+
+Regras de Auditoria:
+    - Validação de CRS: O vetor DEVE estar em coordenadas projetadas (UTM).
+    - Tolerância Bidirecional: Valores fora do intervalo [Alvo ± Tolerância] 
+      são reprovados.
+    - Análise Lateral Robusta: Utiliza UnaryUnion para tratar faixas adjacentes.
+
+Autor: Mestrado - Scripts para QGIS (Agente Gerador)
+Data: 23/04/2026
+"""
+
 from qgis.core import (
-    QgsProject, QgsWkbTypes, QgsField, QgsSpatialIndex, 
-    QgsFeature, QgsGeometry
+    QgsProcessing,
+    QgsProcessingAlgorithm,
+    QgsProcessingParameterVectorLayer,
+    QgsProcessingParameterField,
+    QgsProcessingParameterNumber,
+    QgsProcessingParameterFeatureSink,
+    QgsProcessingParameterFileDestination,
+    QgsProcessingException,
+    QgsWkbTypes,
+    QgsField,
+    QgsSpatialIndex,
+    QgsGeometry,
+    QgsUnitTypes
 )
-from qgis.PyQt.QtCore import QVariant
+from qgis.PyQt.QtCore import QCoreApplication, QVariant
+import os
+from datetime import datetime
 
-def calcular_e_avaliar_sobreposicao():
+
+class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
     """
-    PARTE 1: Calcula a sobreposição de forma híbrida.
-    PARTE 2: Avalia o resultado (QC) com lógica simplificada.
-    CORREÇÃO: Usa unaryUnion() para um merge robusto da sobreposição lateral.
+    Algoritmo para cálculo e auditoria de sobreposição de voo aerofotogramétrico.
     """
-    layer = iface.activeLayer()
 
-    if not layer or layer.geometryType() != QgsWkbTypes.PolygonGeometry:
-        iface.messageBar().pushMessage("Erro", "Selecione uma camada de polígonos válida.", level=Qgis.Critical)
-        return
+    # Constantes de Parâmetros
+    INPUT_LAYER = 'INPUT_LAYER'
+    FIELD_NAME = 'FIELD_NAME'
+    LONG_TARGET = 'LONG_TARGET'
+    LAT_TARGET = 'LAT_TARGET'
+    TOLERANCE = 'TOLERANCE'
+    OUTPUT_LAYER = 'OUTPUT_LAYER'
+    OUTPUT_REPORT = 'OUTPUT_REPORT'
 
-    # --- 1. CONFIGURAÇÃO DOS CAMPOS ---
-    campo_norte = 'sobrep_N'
-    campo_sul = 'sobrep_S'
-    campo_leste = 'sobrep_L'
-    campo_oeste = 'sobrep_O'
-    campo_qc_n = 'qc_long_N'
-    campo_qc_s = 'qc_long_S'
-    campo_qc_l = 'qc_lat_L'
-    campo_qc_o = 'qc_lat_O'
-    
-    provider = layer.dataProvider()
-    campos_para_adicionar = []
-    todos_campos = [
-        campo_norte, campo_sul, campo_leste, campo_oeste,
-        campo_qc_n, campo_qc_s, campo_qc_l, campo_qc_o
-    ]
-    
-    for nome_campo in todos_campos:
-        if provider.fields().indexFromName(nome_campo) == -1:
-            tipo = QVariant.Double if 'sobrep' in nome_campo else QVariant.String
-            campos_para_adicionar.append(QgsField(nome_campo, tipo))
+    def tr(self, string):
+        return QCoreApplication.translate('Processing', string)
 
-    if campos_para_adicionar:
-        provider.addAttributes(campos_para_adicionar)
-        layer.updateFields()
-        print(f"{len(campos_para_adicionar)} campos criados.")
+    def createInstance(self):
+        return AnaliseSobreposicaoEspacial()
 
-    # --- 2. PREPARAÇÃO ---
-    print("Criando índice espacial...")
-    spatial_index = QgsSpatialIndex(layer.getFeatures())
-    all_features = {f.id(): f for f in layer.getFeatures()}
-    print("Mapeamento de feições concluído.")
+    def name(self):
+        return 'analise_sobreposicao_fotos'
 
-    # --- 3. CÁLCULO E AVALIAÇÃO ---
-    layer.startEditing()
-    total_features = len(all_features)
-    print(f"Iniciando cálculo e QC para {total_features} feições...")
-    
-    idx_sobrep_n = layer.fields().indexFromName(campo_norte)
-    idx_sobrep_s = layer.fields().indexFromName(campo_sul)
-    idx_sobrep_l = layer.fields().indexFromName(campo_leste)
-    idx_sobrep_o = layer.fields().indexFromName(campo_oeste)
-    idx_qc_n = layer.fields().indexFromName(campo_qc_n)
-    idx_qc_s = layer.fields().indexFromName(campo_qc_s)
-    idx_qc_l = layer.fields().indexFromName(campo_qc_l)
-    idx_qc_o = layer.fields().indexFromName(campo_qc_o)
+    def displayName(self):
+        return self.tr("Fotos Brutas - Vetor - Sobreposição Longitudinal e Lateral")
 
-    for i, current_feature in enumerate(all_features.values()):
-        if i % 100 == 0:
-            print(f"Processando {i}/{total_features}...")
+    def group(self):
+        return self.tr('Fiscalização Mapeamento SEI')
 
-        current_id = current_feature.id()
-        current_geom = current_feature.geometry()
+    def groupId(self):
+        return 'fiscalizacao_sei'
+
+    def initAlgorithm(self, config=None):
+        # 1. Camada de Entrada
+        self.addParameter(
+            QgsProcessingParameterVectorLayer(
+                self.INPUT_LAYER,
+                self.tr("Camada de Polígonos (Footprints)"),
+                types=[QgsProcessing.TypeVectorPolygon]
+            )
+        )
+
+        # 2. Selecionar Campo do Nome do Arquivo
+        self.addParameter(
+            QgsProcessingParameterField(
+                self.FIELD_NAME,
+                self.tr("Campo com o nome da imagem/arquivo"),
+                parentLayerParameterName=self.INPUT_LAYER
+            )
+        )
+
+        # 3 e 4. Alvos de Sobreposição
+        self.addParameter(QgsProcessingParameterNumber(self.LONG_TARGET, self.tr("Sobreposição Longitudinal Alvo (%)"), defaultValue=60))
+        self.addParameter(QgsProcessingParameterNumber(self.LAT_TARGET, self.tr("Sobreposição Lateral Alvo (%)"), defaultValue=30))
+
+        # 5. Tolerância
+        self.addParameter(QgsProcessingParameterNumber(self.TOLERANCE, self.tr("Limite de Tolerância (± %)"), defaultValue=3))
+
+        # 6 e 7. Saídas
+        self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT_LAYER, self.tr("Camada de Auditoria Espacial")))
+        self.addParameter(QgsProcessingParameterFileDestination(self.OUTPUT_REPORT, self.tr("Relatório de Reprovações (.txt)"), fileFilter='Text files (*.txt)'))
+
+    def processAlgorithm(self, parameters, context, feedback):
+        source = self.parameterAsVectorLayer(parameters, self.INPUT_LAYER, context)
+        campo_id = self.parameterAsString(parameters, self.FIELD_NAME, context)
+        long_alvo = self.parameterAsDouble(parameters, self.LONG_TARGET, context)
+        lat_alvo = self.parameterAsDouble(parameters, self.LAT_TARGET, context)
+        tolerancia = self.parameterAsDouble(parameters, self.TOLERANCE, context)
+        caminho_relatorio = self.parameterAsFileOutput(parameters, self.OUTPUT_REPORT, context)
+
+        # ======================================
+        # VALIDAÇÃO DE CRS (UTM)
+        # ======================================
+        if source.crs().isGeographic():
+            raise QgsProcessingException(self.tr("ERRO: A camada deve estar em coordenadas UTM (Métricas). O CRS atual é Geográfico."))
         
-        if not current_geom or current_geom.isEmpty(): continue
-            
-        current_centroid = current_geom.centroid().asPoint()
-        current_area = current_geom.area()
-        if current_area == 0: continue
+        if source.crs().mapUnits() != QgsUnitTypes.DistanceMeters:
+             raise QgsProcessingException(self.tr("ERRO: A unidade do CRS deve ser metros."))
 
-        vizinho_n_eleito, vizinho_s_eleito = None, None
-        dist_n_min, dist_s_min = float('inf'), float('inf')
-        vizinhos_l_geoms, vizinhos_o_geoms = [], []
+        # Limites Calculados
+        lim_long = (long_alvo - tolerancia, long_alvo + tolerancia)
+        lim_lat = (lat_alvo - tolerancia, lat_alvo + tolerancia)
+
+        # Preparar Campos de Saída
+        fields = source.fields()
+        new_fields = [
+            QgsField('sob_long_N', QVariant.Double), QgsField('sob_long_S', QVariant.Double),
+            QgsField('sob_lat_L', QVariant.Double), QgsField('sob_lat_O', QVariant.Double),
+            QgsField('qc_long', QVariant.String), QgsField('qc_lat', QVariant.String)
+        ]
+        for field in new_fields: fields.append(field)
+
+        (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT_LAYER, context, fields, source.wkbType(), source.crs())
+
+        # Indexação Espacial
+        index = QgsSpatialIndex(source.getFeatures())
+        features = list(source.getFeatures())
+        total = len(features)
         
-        ids_candidatos = spatial_index.intersects(current_geom.boundingBox())
+        reprovacoes = {} # {nome_foto: [lista_de_problemas]}
 
-        for candidato_id in ids_candidatos:
-            if candidato_id == current_id: continue
-            candidato_feature = all_features[candidato_id]
-            candidato_geom = candidato_feature.geometry()
-            if not current_geom.intersects(candidato_geom): continue
-            candidato_centroid = candidato_geom.centroid().asPoint()
+        for i, feat in enumerate(features):
+            if feedback.isCanceled(): break
+
+            geom = feat.geometry()
+            centroide = geom.centroid().asPoint()
+            area_ref = geom.area()
+            nome_foto = str(feat[campo_id])
             
-            dx = candidato_centroid.x() - current_centroid.x()
-            dy = candidato_centroid.y() - current_centroid.y()
-            distancia = math.sqrt(dx**2 + dy**2)
+            # Cálculos de Sobreposição (N, S, L, O)
+            val_n = self._calc_overlap(geom, centroide, index, features, 'N')
+            val_s = self._calc_overlap(geom, centroide, index, features, 'S')
+            val_l = self._calc_overlap_lateral(geom, centroide, index, features, 'L')
+            val_o = self._calc_overlap_lateral(geom, centroide, index, features, 'O')
 
-            if abs(dy) > abs(dx):
-                if dy > 0 and distancia < dist_n_min:
-                    dist_n_min = distancia
-                    vizinho_n_eleito = candidato_geom
-                elif dy < 0 and distancia < dist_s_min:
-                    dist_s_min = distancia
-                    vizinho_s_eleito = candidato_geom
+            # Lógica de QC com Tolerância
+            status_long = self._validar(max(val_n, val_s), lim_long)
+            status_lat = self._validar(max(val_l, val_o), lim_lat)
+
+            # Registro para o Relatório
+            erros = []
+            if status_long: erros.append(f"Longitudinal ({max(val_n, val_s):.1f}%)")
+            if status_lat: erros.append(f"Lateral ({max(val_l, val_o):.1f}%)")
+            
+            if erros:
+                reprovacoes[nome_foto] = erros
+
+            # Salvar na Camada
+            out_feat = feat
+            out_feat.setFields(fields)
+            out_feat.setAttribute('sob_long_N', val_n)
+            out_feat.setAttribute('sob_long_S', val_s)
+            out_feat.setAttribute('sob_lat_L', val_l)
+            out_feat.setAttribute('sob_lat_O', val_o)
+            out_feat.setAttribute('qc_long', status_long if status_long else 'OK')
+            out_feat.setAttribute('qc_lat', status_lat if status_lat else 'OK')
+            sink.addFeature(out_feat, QgsFeatureSink.FastInsert)
+
+            feedback.setProgress(int((i / total) * 100))
+
+        # Gerar Relatório TXT
+        self._gerar_relatorio_txt(caminho_relatorio, reprovacoes, long_alvo, lat_alvo, tolerancia)
+
+        return {self.OUTPUT_LAYER: dest_id, self.OUTPUT_REPORT: caminho_relatorio}
+
+    # ======================================
+    # MÉTODOS AUXILIARES
+    # ======================================
+
+    def _validar(self, valor, limites):
+        """Verifica se o valor está fora do intervalo de tolerância."""
+        if valor < limites[0]: return "Reprovado (Baixa)"
+        if valor > limites[1]: return "Reprovado (Alta)"
+        return None
+
+    def _calc_overlap(self, geom, centro, index, all_feats, direcao):
+        """Cálculo longitudinal (Simplificado por vizinho mais próximo na direção)."""
+        offset = 50 # metros para busca de vizinho
+        ponto_busca = None
+        if direcao == 'N': ponto_busca = QgsGeometry.fromPointXY(centro).translate(0, offset)
+        elif direcao == 'S': ponto_busca = QgsGeometry.fromPointXY(centro).translate(0, -offset)
+        
+        if not ponto_busca: return 0.0
+        
+        ids_vizinhos = index.intersects(ponto_busca.boundingBox())
+        inter_area = 0.0
+        for vid in ids_vizinhos:
+            vizinho = next(f for f in all_feats if f.id() == vid)
+            if vizinho.id() == index: continue # Pula a própria
+            if vizinho.geometry().intersects(geom):
+                inter_area = max(inter_area, vizinho.geometry().intersection(geom).area())
+        
+        return (inter_area / geom.area()) * 100 if geom.area() > 0 else 0
+
+    def _calc_overlap_lateral(self, geom, centro, index, all_feats, direcao):
+        """Cálculo lateral usando UnaryUnion para robustez."""
+        offset = 500 # busca maior para lateral
+        ponto_busca = None
+        if direcao == 'L': ponto_busca = QgsGeometry.fromPointXY(centro).translate(offset, 0)
+        elif direcao == 'O': ponto_busca = QgsGeometry.fromPointXY(centro).translate(-offset, 0)
+        
+        ids_vizinhos = index.intersects(ponto_busca.boundingBox())
+        geometrias_intersecao = []
+        for vid in ids_vizinhos:
+            vizinho = next(f for f in all_feats if f.id() == vid)
+            if vizinho.geometry().intersects(geom):
+                geometrias_intersecao.append(vizinho.geometry().intersection(geom))
+        
+        if not geometrias_intersecao: return 0.0
+        uniao = QgsGeometry.unaryUnion(geometrias_intersecao)
+        return (uniao.area() / geom.area()) * 100 if geom.area() > 0 else 0
+
+    def _gerar_relatorio_txt(self, path, reprovacoes, long, lat, tol):
+        """Gera o relatório de auditoria final."""
+        agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write("===============================================================\n")
+            f.write("       RELATÓRIO DE AUDITORIA DE SOBREPOSIÇÃO ESPACIAL\n")
+            f.write("===============================================================\n")
+            f.write(f"Data: {agora}\n")
+            f.write(f"Configuração Alvo: Longitudinal {long}% | Lateral {lat}% (Tol ±{tol}%)\n")
+            f.write(f"Total de Fotos com Inconformidade: {len(reprovacoes)}\n")
+            f.write("---------------------------------------------------------------\n\n")
+
+            if not reprovacoes:
+                f.write("✓ SUCESSO: Todas as fotos estão dentro dos limites de tolerância.\n")
             else:
-                if dx > 0: vizinhos_l_geoms.append(candidato_geom)
-                else: vizinhos_o_geoms.append(candidato_geom)
-        
-        # --- PARTE 1: CALCULAR SOBREPOSIÇÃO ---
-        sobrep_n, sobrep_s, sobrep_l, sobrep_o = 0.0, 0.0, 0.0, 0.0
-
-        # Lógica N/S: Vizinho mais próximo (Mantida)
-        if vizinho_n_eleito:
-            sobrep_n = (current_geom.intersection(vizinho_n_eleito).area() / current_area) * 100
-        if vizinho_s_eleito:
-            sobrep_s = (current_geom.intersection(vizinho_s_eleito).area() / current_area) * 100
-
-        # Lógica L/O: Merge com unaryUnion() (CORRIGIDA)
-        if vizinhos_l_geoms:
-            lista_intersecoes_l = [current_geom.intersection(g) for g in vizinhos_l_geoms]
-            uniao_l = QgsGeometry.unaryUnion(lista_intersecoes_l)
-            if not uniao_l.isEmpty():
-                sobrep_l = (uniao_l.area() / current_area) * 100
-
-        if vizinhos_o_geoms:
-            lista_intersecoes_o = [current_geom.intersection(g) for g in vizinhos_o_geoms]
-            uniao_o = QgsGeometry.unaryUnion(lista_intersecoes_o)
-            if not uniao_o.isEmpty():
-                sobrep_o = (uniao_o.area() / current_area) * 100
-        
-        # --- PARTE 2: AVALIAÇÃO DE QC (Lógica Simplificada) ---
-        status_n = "Reprovado" if sobrep_n < 58.2 else None
-        status_s = "Reprovado" if sobrep_s < 58.2 else None
-        status_l = "Reprovado" if sobrep_l < 29.1 else None
-        status_o = "Reprovado" if sobrep_o < 29.1 else None
-
-        # --- ATUALIZAR TODOS OS VALORES NA CAMADA ---
-        layer.changeAttributeValue(current_id, idx_sobrep_n, float(f'{sobrep_n:.2f}'))
-        layer.changeAttributeValue(current_id, idx_sobrep_s, float(f'{sobrep_s:.2f}'))
-        layer.changeAttributeValue(current_id, idx_sobrep_l, float(f'{sobrep_l:.2f}'))
-        layer.changeAttributeValue(current_id, idx_sobrep_o, float(f'{sobrep_o:.2f}'))
-        
-        layer.changeAttributeValue(current_id, idx_qc_n, status_n)
-        layer.changeAttributeValue(current_id, idx_qc_s, status_s)
-        layer.changeAttributeValue(current_id, idx_qc_l, status_l)
-        layer.changeAttributeValue(current_id, idx_qc_o, status_o)
-
-    # --- FINALIZAR ---
-    layer.commitChanges()
-    print("Processamento e QC concluídos com sucesso!")
-    iface.messageBar().pushMessage("Sucesso", "Cálculo e avaliação de sobreposição finalizados.", level=Qgis.Success, duration=7)
-
-
-# --- Executa a função ---
-calcular_e_avaliar_sobreposicao()
-
-# --- FIM DO CÓDIGO ---
+                f.write(f"{'FOTO / IMAGEM':<40} | {'INCONFORMIDADES DETECTADAS'}\n")
+                f.write("-" * 80 + "\n")
+                for foto, erros in sorted(reprovacoes.items()):
+                    f.write(f"{foto:<40} | {' e '.join(erros)}\n")
+            
+            f.write("\n---------------------------------------------------------------\n")
+            f.write("Fim do Relatório de Fiscalização SEI.\n")
