@@ -2,10 +2,7 @@
 """
 Plugin QGIS para Análise de Qualidade Visual: Arrasto/Borramento
 Replicação estrita da metodologia de Takahashi et al. (2020)
-- Estatística Direcional
-- Filtro Sobel (5x5)
-- Histograma de Gradiente e Otsu
-- Média Aparada (Trimmean) em 9 recortes de 512x512
+* SEM DEPENDÊNCIAS EXTERNAS (Usa apenas NumPy e SciPy, nativos do QGIS)
 """
 
 from qgis.core import (
@@ -19,7 +16,7 @@ from qgis.core import (
 from qgis.PyQt.QtCore import QCoreApplication
 from osgeo import gdal
 import numpy as np
-import cv2
+from scipy import ndimage
 from scipy.stats import skew, kurtosis
 import os
 import glob
@@ -74,18 +71,53 @@ class AnaliseBorramentoTakahashi(QgsProcessingAlgorithm):
             )
         )
 
+    def otsu_threshold(self, data_array):
+        """
+        Implementação pura em NumPy do método de Otsu para evitar o uso do OpenCV.
+        """
+        hist, bins = np.histogram(data_array, bins=256, range=(0, 255))
+        total = hist.sum()
+        sum_total = np.dot(np.arange(256), hist)
+        
+        weight_bg = 0
+        sum_bg = 0
+        max_var = 0
+        thresh = 0
+        
+        for i in range(256):
+            weight_bg += hist[i]
+            if weight_bg == 0:
+                continue
+                
+            weight_fg = total - weight_bg
+            if weight_fg == 0:
+                break
+                
+            sum_bg += i * hist[i]
+            mean_bg = sum_bg / weight_bg
+            mean_fg = (sum_total - sum_bg) / weight_fg
+            
+            var_between = weight_bg * weight_fg * (mean_bg - mean_fg) ** 2
+            
+            if var_between > max_var:
+                max_var = var_between
+                thresh = i
+                
+        return thresh
+
     def calcular_metricas_takahashi(self, crop):
         """
-        Aplica os 12 passos da Figura 7 (Takahashi et al., 2020) em um recorte de 512x512.
+        Aplica os 12 passos da Figura 7 (Takahashi et al., 2020) usando SciPy.
         """
-        # Sobel 5x5 (Passo 4.1 do artigo)
-        gH = cv2.Sobel(crop, cv2.CV_64F, 1, 0, ksize=5)
-        gV = cv2.Sobel(crop, cv2.CV_64F, 0, 1, ksize=5)
+        # Sobel usando SciPy (Passo 4.1 do artigo)
+        crop_float = crop.astype(float)
+        gH = ndimage.sobel(crop_float, axis=1) # Horizontal
+        gV = ndimage.sobel(crop_float, axis=0) # Vertical
 
         # Magnitude e Direção
         magnitude = np.sqrt(gH**2 + gV**2)
         direction = np.arctan2(gV, gH) * (180 / np.pi)
-        direction = np.mod(direction, 360) # Normalizar para 0-359
+        direction = np.mod(direction, 360)
 
         # Histograma (Passo 1)
         hist, bins = np.histogram(direction, bins=360, range=(0, 360))
@@ -94,16 +126,14 @@ class AnaliseBorramentoTakahashi(QgsProcessingAlgorithm):
         min_idx = np.argmin(hist)
         hist_shifted = np.roll(hist, -min_idx)
         
-        # Threshold de Otsu para dividir em 2 áreas (Passo 3)
-        # Como o Otsu do CV2 requer imagem 8-bit, adaptamos para o array do histograma
-        hist_norm = cv2.normalize(hist_shifted, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        _, thresh = cv2.threshold(hist_norm, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        # Interpolação para 0-255 e Threshold de Otsu nativo (Passo 3)
+        hist_norm = np.interp(hist_shifted, (hist_shifted.min(), hist_shifted.max()), (0, 255)).astype(np.uint8)
+        thresh = self.otsu_threshold(hist_norm)
         
         # Áreas divididas baseadas no limite de Otsu
-        area1 = hist_shifted[hist_norm.flatten() <= thresh[0][0]]
-        area2 = hist_shifted[hist_norm.flatten() > thresh[0][0]]
+        area1 = hist_shifted[hist_norm <= thresh]
+        area2 = hist_shifted[hist_norm > thresh]
 
-        # Se alguma área ficar vazia devido a imagens com cor sólida/sem borda, tratamos o erro
         if len(area1) == 0 or len(area2) == 0:
             return None
 
@@ -138,7 +168,7 @@ class AnaliseBorramentoTakahashi(QgsProcessingAlgorithm):
         sin_theta = np.mean(np.sin(np.radians(direction)))
         var_circular = 1 - np.sqrt(cos_theta**2 + sin_theta**2)
 
-        # Multiplicar pela variância circular (Passo 12 - Valor de Avaliação Final)
+        # Multiplicar pela variância circular (Passo 12)
         eval_value = val_11 * var_circular
 
         return eval_value
@@ -156,7 +186,7 @@ class AnaliseBorramentoTakahashi(QgsProcessingAlgorithm):
             lista_arquivos = glob.glob(padrao_busca)
 
         if not lista_arquivos:
-            raise QgsProcessingException(self.tr("Nenhum arquivo .tif encontrado."))
+            raise QgsProcessingException(self.tr("Nenhum arquivo .tif encontrado na pasta especificada."))
 
         buffer_relatorio = []
         buffer_relatorio.append("=" * 80)
@@ -182,7 +212,7 @@ class AnaliseBorramentoTakahashi(QgsProcessingAlgorithm):
 
                 x_size = dataset.RasterXSize
                 y_size = dataset.RasterYSize
-                band = dataset.GetRasterBand(1) # Banda 1 (R)
+                band = dataset.GetRasterBand(1) # Lendo a banda 1
                 
                 crop_size = 512
                 eval_values = []
@@ -193,13 +223,12 @@ class AnaliseBorramentoTakahashi(QgsProcessingAlgorithm):
 
                 for y in y_steps:
                     for x in x_steps:
-                        # Ajustar offset para centralizar o recorte no ponto
                         x_off = max(0, min(x - crop_size//2, x_size - crop_size))
                         y_off = max(0, min(y - crop_size//2, y_size - crop_size))
                         
                         crop = band.ReadAsArray(x_off, y_off, crop_size, crop_size)
                         
-                        # Normalizar para 8bits
+                        # Normalizar para 8bits se for 16bits
                         if crop.dtype == np.uint16:
                             crop = (crop / 256).astype(np.uint8)
                         
@@ -207,21 +236,20 @@ class AnaliseBorramentoTakahashi(QgsProcessingAlgorithm):
                         if val is not None:
                             eval_values.append(val)
                             
-                dataset = None # Fechar arquivo
+                dataset = None
 
-                # Aplicar Trimmean (Remover min e max, e fazer a média)
+                # Trimmean
                 if len(eval_values) >= 3:
                     eval_values.sort()
-                    eval_values = eval_values[1:-1] # Remove o menor (índice 0) e o maior (último índice)
+                    eval_values = eval_values[1:-1]
                     trimmean = np.mean(eval_values)
                     buffer_relatorio.append(f"Imagem: {nome_arquivo} | Valor Trimmean: {trimmean:.5f}")
                 else:
-                    buffer_relatorio.append(f"Imagem: {nome_arquivo} | Valor Trimmean: FALHA (Feições insuficientes nos recortes)")
+                    buffer_relatorio.append(f"Imagem: {nome_arquivo} | Valor Trimmean: FALHA (Sem feições nos recortes)")
 
             except Exception as e:
                 buffer_relatorio.append(f"[ERRO PROCESSAMENTO] {nome_arquivo}: {str(e)}")
 
-        # Salvar relatório
         try:
             with open(arquivo_saida, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(buffer_relatorio))
