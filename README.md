@@ -41,7 +41,14 @@ O objeivo desta etapa é validar a metodologia proposta através de uma avaliaç
 
 * **scripts/01_conformidade_tecnica/**: Rotinas para extração de metadados e verificação dos parâmetros técnicos. Esses scripts foram escritos para serem utilizados na caixa de ferramentas do software de SIG Qgis.
 * **scripts/02_analise_visual/**: Scripts para pré-processamento, treinamento e inferência de modelos de análise visual. Esses scipts foram escritos para serem utilizados em algum ambiente de desenvolvimento através de alguma IDE. Por exemplo, nem toda sombra vai impossibilitar a fotointerpretação da imagem para a geração de cartografia de referência.
+* **prompts**: Prompts de agentes de criação dos scripts da pesquisa.
 
+---
+
+## Status da Dissertação
+
+* A pesquisa encontra-se na fase de qualificação, com previsão de encerramento em Março de 2027.
+  
 ---
 
 ## Propriedade Intelectual e Citação
@@ -51,4 +58,4 @@ O objeivo desta etapa é validar a metodologia proposta através de uma avaliaç
 Este código é parte integrante da pesquisa de mestrado intitulada:
 "Framework Automatizado e Integrado para o Controle de Qualidade de Fotografias Aéreas Brutas: validação da conformidade técnica e detecção de anomalias visuais." 
 
-Todos os direitos reservados. O uso, reprodução ou distribuição deste material sem autorização prévia é proibido. Para fins acadêmicos, cite a obra original (**colocar citação pra obra**).
+Todos os direitos reservados. O uso, reprodução ou distribuição deste material sem autorização prévia é proibido. Para fins acadêmicos, cite a obra original.
