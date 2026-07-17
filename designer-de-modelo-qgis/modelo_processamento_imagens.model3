@@ -1,0 +1,417 @@
+<!DOCTYPE model>
+<Option type="Map">
+  <Option type="Map" name="children">
+    <Option type="Map" name="script:fiscalizacao_profundidade_bits_1">
+      <Option type="bool" name="active" value="true"/>
+      <Option name="alg_config"/>
+      <Option type="QString" name="alg_id" value="script:fiscalizacao_profundidade_bits"/>
+      <Option type="QString" name="color" value=""/>
+      <Option type="Map" name="comment">
+        <Option type="QString" name="color" value=""/>
+        <Option type="QString" name="component_description" value=""/>
+        <Option type="double" name="component_height" value="60"/>
+        <Option type="double" name="component_pos_x" value="416"/>
+        <Option type="double" name="component_pos_y" value="398"/>
+        <Option type="double" name="component_width" value="100"/>
+        <Option type="bool" name="outputs_collapsed" value="true"/>
+        <Option type="bool" name="parameters_collapsed" value="true"/>
+      </Option>
+      <Option type="QString" name="component_description" value="Fotos Brutas - Imagem - Profundidade de Bits"/>
+      <Option type="double" name="component_height" value="48"/>
+      <Option type="double" name="component_pos_x" value="770.3388382675835"/>
+      <Option type="double" name="component_pos_y" value="155.10093662057645"/>
+      <Option type="double" name="component_width" value="200"/>
+      <Option type="List" name="dependencies">
+        <Option type="Map">
+          <Option type="QString" name="child_id" value="script:verificacao_formato_fotos_1"/>
+          <Option type="QString" name="conditional_branch" value=""/>
+        </Option>
+      </Option>
+      <Option type="QString" name="id" value="script:fiscalizacao_profundidade_bits_1"/>
+      <Option type="Map" name="outputs">
+        <Option type="Map" name="bits.txt">
+          <Option type="QString" name="child_id" value="script:fiscalizacao_profundidade_bits_1"/>
+          <Option type="QString" name="color" value=""/>
+          <Option type="Map" name="comment">
+            <Option type="QString" name="color" value=""/>
+            <Option type="QString" name="component_description" value=""/>
+            <Option type="double" name="component_height" value="60"/>
+            <Option type="double" name="component_pos_x" value="0"/>
+            <Option type="double" name="component_pos_y" value="0"/>
+            <Option type="double" name="component_width" value="100"/>
+            <Option type="bool" name="outputs_collapsed" value="true"/>
+            <Option type="bool" name="parameters_collapsed" value="true"/>
+          </Option>
+          <Option type="QString" name="component_description" value="bits.txt"/>
+          <Option type="double" name="component_height" value="30"/>
+          <Option type="double" name="component_pos_x" value="780.3997559903305"/>
+          <Option type="double" name="component_pos_y" value="267.1227594647762"/>
+          <Option type="double" name="component_width" value="200"/>
+          <Option type="invalid" name="default_value"/>
+          <Option type="bool" name="mandatory" value="false"/>
+          <Option type="QString" name="name" value="bits.txt"/>
+          <Option type="QString" name="output_name" value="ARQUIVO_RELATORIO"/>
+          <Option type="bool" name="outputs_collapsed" value="true"/>
+          <Option type="bool" name="parameters_collapsed" value="true"/>
+        </Option>
+      </Option>
+      <Option type="bool" name="outputs_collapsed" value="true"/>
+      <Option type="bool" name="parameters_collapsed" value="true"/>
+      <Option type="Map" name="params">
+        <Option type="List" name="BITS_REFERENCIA">
+          <Option type="Map">
+            <Option type="int" name="source" value="2"/>
+            <Option type="int" name="static_value" value="2"/>
+          </Option>
+        </Option>
+        <Option type="List" name="PASTA_ENTRADA">
+          <Option type="Map">
+            <Option type="QString" name="parameter_name" value="pasta_de_entrada_das_fotos"/>
+            <Option type="int" name="source" value="0"/>
+          </Option>
+        </Option>
+      </Option>
+    </Option>
+    <Option type="Map" name="script:verificacao_bandas_fotos_1">
+      <Option type="bool" name="active" value="true"/>
+      <Option name="alg_config"/>
+      <Option type="QString" name="alg_id" value="script:verificacao_bandas_fotos"/>
+      <Option type="QString" name="color" value=""/>
+      <Option type="Map" name="comment">
+        <Option type="QString" name="color" value=""/>
+        <Option type="QString" name="component_description" value=""/>
+        <Option type="double" name="component_height" value="60"/>
+        <Option type="double" name="component_pos_x" value="345"/>
+        <Option type="double" name="component_pos_y" value="45"/>
+        <Option type="double" name="component_width" value="100"/>
+        <Option type="bool" name="outputs_collapsed" value="true"/>
+        <Option type="bool" name="parameters_collapsed" value="true"/>
+      </Option>
+      <Option type="QString" name="component_description" value="Fotos Brutas - Imagem - Conformidade Espectral (Bandas)"/>
+      <Option type="double" name="component_height" value="46.425847644099186"/>
+      <Option type="double" name="component_pos_x" value="311.61792166306554"/>
+      <Option type="double" name="component_pos_y" value="158.14348071266386"/>
+      <Option type="double" name="component_width" value="200"/>
+      <Option name="dependencies"/>
+      <Option type="QString" name="id" value="script:verificacao_bandas_fotos_1"/>
+      <Option type="Map" name="outputs">
+        <Option type="Map" name="bandas.txt">
+          <Option type="QString" name="child_id" value="script:verificacao_bandas_fotos_1"/>
+          <Option type="QString" name="color" value=""/>
+          <Option type="Map" name="comment">
+            <Option type="QString" name="color" value=""/>
+            <Option type="QString" name="component_description" value=""/>
+            <Option type="double" name="component_height" value="60"/>
+            <Option type="double" name="component_pos_x" value="0"/>
+            <Option type="double" name="component_pos_y" value="0"/>
+            <Option type="double" name="component_width" value="100"/>
+            <Option type="bool" name="outputs_collapsed" value="true"/>
+            <Option type="bool" name="parameters_collapsed" value="true"/>
+          </Option>
+          <Option type="QString" name="component_description" value="bandas.txt"/>
+          <Option type="double" name="component_height" value="30"/>
+          <Option type="double" name="component_pos_x" value="307.04691580588786"/>
+          <Option type="double" name="component_pos_y" value="270.77817197598347"/>
+          <Option type="double" name="component_width" value="200"/>
+          <Option type="invalid" name="default_value"/>
+          <Option type="bool" name="mandatory" value="false"/>
+          <Option type="QString" name="name" value="bandas.txt"/>
+          <Option type="QString" name="output_name" value="OUTPUT_REPORT"/>
+          <Option type="bool" name="outputs_collapsed" value="true"/>
+          <Option type="bool" name="parameters_collapsed" value="true"/>
+        </Option>
+      </Option>
+      <Option type="bool" name="outputs_collapsed" value="false"/>
+      <Option type="bool" name="parameters_collapsed" value="true"/>
+      <Option type="Map" name="params">
+        <Option type="List" name="COMPOSITION_TYPE">
+          <Option type="Map">
+            <Option type="int" name="source" value="2"/>
+            <Option type="int" name="static_value" value="0"/>
+          </Option>
+        </Option>
+        <Option type="List" name="EXPECTED_BANDS">
+          <Option type="Map">
+            <Option type="int" name="source" value="2"/>
+            <Option type="int" name="static_value" value="3"/>
+          </Option>
+        </Option>
+        <Option type="List" name="INPUT_FOLDER">
+          <Option type="Map">
+            <Option type="QString" name="parameter_name" value="pasta_de_entrada_das_fotos"/>
+            <Option type="int" name="source" value="0"/>
+          </Option>
+        </Option>
+      </Option>
+    </Option>
+    <Option type="Map" name="script:verificacao_epsg_fotos_1">
+      <Option type="bool" name="active" value="true"/>
+      <Option name="alg_config"/>
+      <Option type="QString" name="alg_id" value="script:verificacao_epsg_fotos"/>
+      <Option type="QString" name="color" value=""/>
+      <Option type="Map" name="comment">
+        <Option type="QString" name="color" value=""/>
+        <Option type="QString" name="component_description" value=""/>
+        <Option type="double" name="component_height" value="60"/>
+        <Option type="double" name="component_pos_x" value="419"/>
+        <Option type="double" name="component_pos_y" value="521"/>
+        <Option type="double" name="component_width" value="100"/>
+        <Option type="bool" name="outputs_collapsed" value="true"/>
+        <Option type="bool" name="parameters_collapsed" value="true"/>
+      </Option>
+      <Option type="QString" name="component_description" value="Fotos Brutas - Imagem - Sistema de Referência (EPSG)"/>
+      <Option type="double" name="component_height" value="46.91843722971274"/>
+      <Option type="double" name="component_pos_x" value="993.1769267711516"/>
+      <Option type="double" name="component_pos_y" value="156.49254168703325"/>
+      <Option type="double" name="component_width" value="200"/>
+      <Option type="List" name="dependencies">
+        <Option type="Map">
+          <Option type="QString" name="child_id" value="script:fiscalizacao_profundidade_bits_1"/>
+          <Option type="QString" name="conditional_branch" value=""/>
+        </Option>
+      </Option>
+      <Option type="QString" name="id" value="script:verificacao_epsg_fotos_1"/>
+      <Option type="Map" name="outputs">
+        <Option type="Map" name="epsg.txt">
+          <Option type="QString" name="child_id" value="script:verificacao_epsg_fotos_1"/>
+          <Option type="QString" name="color" value=""/>
+          <Option type="Map" name="comment">
+            <Option type="QString" name="color" value=""/>
+            <Option type="QString" name="component_description" value=""/>
+            <Option type="double" name="component_height" value="60"/>
+            <Option type="double" name="component_pos_x" value="0"/>
+            <Option type="double" name="component_pos_y" value="0"/>
+            <Option type="double" name="component_width" value="100"/>
+            <Option type="bool" name="outputs_collapsed" value="true"/>
+            <Option type="bool" name="parameters_collapsed" value="true"/>
+          </Option>
+          <Option type="QString" name="component_description" value="epsg.txt"/>
+          <Option type="double" name="component_height" value="30"/>
+          <Option type="double" name="component_pos_x" value="996.4718757669364"/>
+          <Option type="double" name="component_pos_y" value="266.62991853456754"/>
+          <Option type="double" name="component_width" value="200"/>
+          <Option type="invalid" name="default_value"/>
+          <Option type="bool" name="mandatory" value="false"/>
+          <Option type="QString" name="name" value="epsg.txt"/>
+          <Option type="QString" name="output_name" value="OUTPUT_REPORT"/>
+          <Option type="bool" name="outputs_collapsed" value="true"/>
+          <Option type="bool" name="parameters_collapsed" value="true"/>
+        </Option>
+      </Option>
+      <Option type="bool" name="outputs_collapsed" value="true"/>
+      <Option type="bool" name="parameters_collapsed" value="true"/>
+      <Option type="Map" name="params">
+        <Option type="List" name="INPUT_FOLDER">
+          <Option type="Map">
+            <Option type="QString" name="parameter_name" value="pasta_de_entrada_das_fotos"/>
+            <Option type="int" name="source" value="0"/>
+          </Option>
+        </Option>
+        <Option type="List" name="TARGET_CRS">
+          <Option type="Map">
+            <Option type="int" name="source" value="2"/>
+            <Option type="QgsCoordinateReferenceSystem" name="static_value">
+              <spatialrefsys nativeFormat="Wkt">
+                <wkt>GEOGCRS["SIRGAS 2000",DATUM["Sistema de Referencia Geocentrico para las AmericaS 2000",ELLIPSOID["GRS 1980",6378137,298.257222101,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],CS[ellipsoidal,2],AXIS["geodetic latitude (Lat)",north,ORDER[1],ANGLEUNIT["degree",0.0174532925199433]],AXIS["geodetic longitude (Lon)",east,ORDER[2],ANGLEUNIT["degree",0.0174532925199433]],USAGE[SCOPE["Horizontal component of 3D system."],AREA["Latin America - Central America and South America - onshore and offshore. Brazil - onshore and offshore."],BBOX[-59.87,-122.19,32.72,-25.28]],ID["EPSG",4674]]</wkt>
+                <proj4>+proj=longlat +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +no_defs</proj4>
+                <srsid>3517</srsid>
+                <srid>4674</srid>
+                <authid>EPSG:4674</authid>
+                <description>SIRGAS 2000</description>
+                <projectionacronym>longlat</projectionacronym>
+                <ellipsoidacronym>EPSG:7019</ellipsoidacronym>
+                <geographicflag>true</geographicflag>
+              </spatialrefsys>
+            </Option>
+          </Option>
+        </Option>
+      </Option>
+    </Option>
+    <Option type="Map" name="script:verificacao_formato_fotos_1">
+      <Option type="bool" name="active" value="true"/>
+      <Option name="alg_config"/>
+      <Option type="QString" name="alg_id" value="script:verificacao_formato_fotos"/>
+      <Option type="QString" name="color" value=""/>
+      <Option type="Map" name="comment">
+        <Option type="QString" name="color" value=""/>
+        <Option type="QString" name="component_description" value=""/>
+        <Option type="double" name="component_height" value="60"/>
+        <Option type="double" name="component_pos_x" value="436"/>
+        <Option type="double" name="component_pos_y" value="291"/>
+        <Option type="double" name="component_width" value="100"/>
+        <Option type="bool" name="outputs_collapsed" value="true"/>
+        <Option type="bool" name="parameters_collapsed" value="true"/>
+      </Option>
+      <Option type="QString" name="component_description" value="Fotos Brutas - Imagem - Consistência de Formato"/>
+      <Option type="double" name="component_height" value="49.08156277028727"/>
+      <Option type="double" name="component_pos_x" value="548.5748311436689"/>
+      <Option type="double" name="component_pos_y" value="157.49117629063133"/>
+      <Option type="double" name="component_width" value="200.7963074794144"/>
+      <Option type="List" name="dependencies">
+        <Option type="Map">
+          <Option type="QString" name="child_id" value="script:verificacao_bandas_fotos_1"/>
+          <Option type="QString" name="conditional_branch" value=""/>
+        </Option>
+      </Option>
+      <Option type="QString" name="id" value="script:verificacao_formato_fotos_1"/>
+      <Option type="Map" name="outputs">
+        <Option type="Map" name="formato.txt">
+          <Option type="QString" name="child_id" value="script:verificacao_formato_fotos_1"/>
+          <Option type="QString" name="color" value=""/>
+          <Option type="Map" name="comment">
+            <Option type="QString" name="color" value=""/>
+            <Option type="QString" name="component_description" value=""/>
+            <Option type="double" name="component_height" value="60"/>
+            <Option type="double" name="component_pos_x" value="0"/>
+            <Option type="double" name="component_pos_y" value="0"/>
+            <Option type="double" name="component_width" value="100"/>
+            <Option type="bool" name="outputs_collapsed" value="true"/>
+            <Option type="bool" name="parameters_collapsed" value="true"/>
+          </Option>
+          <Option type="QString" name="component_description" value="formato.txt"/>
+          <Option type="double" name="component_height" value="30"/>
+          <Option type="double" name="component_pos_x" value="549.4306350048732"/>
+          <Option type="double" name="component_pos_y" value="268.4483513479405"/>
+          <Option type="double" name="component_width" value="200"/>
+          <Option type="invalid" name="default_value"/>
+          <Option type="bool" name="mandatory" value="false"/>
+          <Option type="QString" name="name" value="formato.txt"/>
+          <Option type="QString" name="output_name" value="OUTPUT_REPORT"/>
+          <Option type="bool" name="outputs_collapsed" value="true"/>
+          <Option type="bool" name="parameters_collapsed" value="true"/>
+        </Option>
+      </Option>
+      <Option type="bool" name="outputs_collapsed" value="true"/>
+      <Option type="bool" name="parameters_collapsed" value="true"/>
+      <Option type="Map" name="params">
+        <Option type="List" name="INPUT_FOLDER">
+          <Option type="Map">
+            <Option type="QString" name="parameter_name" value="pasta_de_entrada_das_fotos"/>
+            <Option type="int" name="source" value="0"/>
+          </Option>
+        </Option>
+      </Option>
+    </Option>
+  </Option>
+  <Option type="Map" name="designerParameterValues">
+    <Option type="QString" name="bandastxt" value="D:\Mestrado\teste_designer_modelo_qgis\bandas.txt"/>
+    <Option type="QString" name="bitstxt" value="D:\Mestrado\teste_designer_modelo_qgis"/>
+    <Option type="QString" name="epsgtxt" value="D:\Mestrado\teste_designer_modelo_qgis\epsg.txt"/>
+    <Option type="QString" name="formatotxt" value="D:\Mestrado\teste_designer_modelo_qgis\formato.txt"/>
+    <Option type="QString" name="pasta_de_entrada_das_fotos" value="Y:\LOTE01\FOTO\ENT_01\REV_01\01\RGB\20230823"/>
+  </Option>
+  <Option name="groupBoxes"/>
+  <Option name="help"/>
+  <Option type="QString" name="internal_version" value="Version2"/>
+  <Option name="modelVariables"/>
+  <Option type="QString" name="model_group" value=""/>
+  <Option type="QString" name="model_name" value="modelo_processamento_imagens"/>
+  <Option type="QString" name="outputGroup" value=""/>
+  <Option name="outputOrder"/>
+  <Option type="Map" name="parameterDefinitions">
+    <Option type="Map" name="bandastxt">
+      <Option type="bool" name="create_by_default" value="true"/>
+      <Option type="invalid" name="default"/>
+      <Option type="invalid" name="defaultGui"/>
+      <Option type="QString" name="description" value="bandas.txt"/>
+      <Option type="QString" name="file_filter" value="Text files (*.txt)"/>
+      <Option type="int" name="flags" value="0"/>
+      <Option type="QString" name="help" value=""/>
+      <Option type="Map" name="metadata">
+        <Option type="QString" name="_modelChildId" value="script:verificacao_bandas_fotos_1"/>
+        <Option type="QString" name="_modelChildOutputName" value="bandas.txt"/>
+        <Option type="QString" name="_modelChildProvider" value="script"/>
+      </Option>
+      <Option type="QString" name="name" value="bandastxt"/>
+      <Option type="QString" name="parameter_type" value="fileDestination"/>
+      <Option type="bool" name="supports_non_file_outputs" value="true"/>
+    </Option>
+    <Option type="Map" name="bitstxt">
+      <Option type="bool" name="create_by_default" value="true"/>
+      <Option type="invalid" name="default"/>
+      <Option type="invalid" name="defaultGui"/>
+      <Option type="QString" name="description" value="bits.txt"/>
+      <Option type="int" name="flags" value="0"/>
+      <Option type="QString" name="help" value=""/>
+      <Option type="Map" name="metadata">
+        <Option type="QString" name="_modelChildId" value="script:fiscalizacao_profundidade_bits_1"/>
+        <Option type="QString" name="_modelChildOutputName" value="bits.txt"/>
+        <Option type="QString" name="_modelChildProvider" value="script"/>
+      </Option>
+      <Option type="QString" name="name" value="bitstxt"/>
+      <Option type="QString" name="parameter_type" value="folderDestination"/>
+      <Option type="bool" name="supports_non_file_outputs" value="true"/>
+    </Option>
+    <Option type="Map" name="epsgtxt">
+      <Option type="bool" name="create_by_default" value="true"/>
+      <Option type="invalid" name="default"/>
+      <Option type="invalid" name="defaultGui"/>
+      <Option type="QString" name="description" value="epsg.txt"/>
+      <Option type="QString" name="file_filter" value="Text files (*.txt)"/>
+      <Option type="int" name="flags" value="0"/>
+      <Option type="QString" name="help" value=""/>
+      <Option type="Map" name="metadata">
+        <Option type="QString" name="_modelChildId" value="script:verificacao_epsg_fotos_1"/>
+        <Option type="QString" name="_modelChildOutputName" value="epsg.txt"/>
+        <Option type="QString" name="_modelChildProvider" value="script"/>
+      </Option>
+      <Option type="QString" name="name" value="epsgtxt"/>
+      <Option type="QString" name="parameter_type" value="fileDestination"/>
+      <Option type="bool" name="supports_non_file_outputs" value="true"/>
+    </Option>
+    <Option type="Map" name="formatotxt">
+      <Option type="bool" name="create_by_default" value="true"/>
+      <Option type="invalid" name="default"/>
+      <Option type="invalid" name="defaultGui"/>
+      <Option type="QString" name="description" value="formato.txt"/>
+      <Option type="QString" name="file_filter" value="Text files (*.txt)"/>
+      <Option type="int" name="flags" value="0"/>
+      <Option type="QString" name="help" value=""/>
+      <Option type="Map" name="metadata">
+        <Option type="QString" name="_modelChildId" value="script:verificacao_formato_fotos_1"/>
+        <Option type="QString" name="_modelChildOutputName" value="formato.txt"/>
+        <Option type="QString" name="_modelChildProvider" value="script"/>
+      </Option>
+      <Option type="QString" name="name" value="formatotxt"/>
+      <Option type="QString" name="parameter_type" value="fileDestination"/>
+      <Option type="bool" name="supports_non_file_outputs" value="true"/>
+    </Option>
+    <Option type="Map" name="pasta_de_entrada_das_fotos">
+      <Option type="int" name="behavior" value="1"/>
+      <Option type="invalid" name="default"/>
+      <Option type="invalid" name="defaultGui"/>
+      <Option type="QString" name="description" value="Pasta de entrada das fotos"/>
+      <Option type="QString" name="extension" value=""/>
+      <Option type="QString" name="filefilter" value="Todos os arquivos (*.*)"/>
+      <Option type="int" name="flags" value="0"/>
+      <Option type="QString" name="help" value=""/>
+      <Option name="metadata"/>
+      <Option type="QString" name="name" value="pasta_de_entrada_das_fotos"/>
+      <Option type="QString" name="parameter_type" value="file"/>
+    </Option>
+  </Option>
+  <Option name="parameterOrder"/>
+  <Option type="Map" name="parameters">
+    <Option type="Map" name="pasta_de_entrada_das_fotos">
+      <Option type="QString" name="color" value=""/>
+      <Option type="Map" name="comment">
+        <Option type="QString" name="color" value=""/>
+        <Option type="QString" name="component_description" value=""/>
+        <Option type="double" name="component_height" value="60"/>
+        <Option type="double" name="component_pos_x" value="540"/>
+        <Option type="double" name="component_pos_y" value="15"/>
+        <Option type="double" name="component_width" value="100"/>
+        <Option type="bool" name="outputs_collapsed" value="true"/>
+        <Option type="bool" name="parameters_collapsed" value="true"/>
+      </Option>
+      <Option type="QString" name="component_description" value="pasta_de_entrada_das_fotos"/>
+      <Option type="double" name="component_height" value="34.85504872404056"/>
+      <Option type="double" name="component_pos_x" value="642.9315442976995"/>
+      <Option type="double" name="component_pos_y" value="35.77292992791024"/>
+      <Option type="double" name="component_width" value="201.67224570677024"/>
+      <Option type="QString" name="name" value="pasta_de_entrada_das_fotos"/>
+      <Option type="bool" name="outputs_collapsed" value="true"/>
+      <Option type="bool" name="parameters_collapsed" value="true"/>
+    </Option>
+  </Option>
+</Option>
