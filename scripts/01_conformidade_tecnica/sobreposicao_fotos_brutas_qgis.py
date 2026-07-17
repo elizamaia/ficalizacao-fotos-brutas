@@ -1,17 +1,19 @@
 # -*- coding: utf-8 -*-
-
 """
 Plugin QGIS para Análise Espacial de Sobreposição (Longitudinal e Lateral)
 
-Lógica rigorosa de cálculo:
-    - Longitudinal: Interseção estrita com o vizinho mais próximo ao Norte e ao Sul.
-    - Lateral: Interseção com todos os vizinhos a Leste e Oeste, gerando uma 
-      geometria única (Merge/UnaryUnion) antes do cálculo final.
-    - Classificação baseada no vetor de deslocamento (dx, dy) dos centroides.
-    - Validação: Acusa erro apenas se a sobreposição for nula ou inferior ao limite mínimo aceitável.
+Este algoritmo avalia poligonais (footprints) de fotografias aéreas brutas para validar as
+sobreposições longitudinais e laterais. Ele processa a geometria dos voos e gera uma 
+camada de auditoria contendo as porcentagens de sobreposição calculadas e um relatório 
+textual (.txt) de conformidade técnica, acusando erros de forma independente para cada direção.
+
+Cálculos:
+    - Sobreposição Longitudinal: (Área de interseção com o vizinho mais próximo ao Norte/Sul / Área total) * 100
+    - Sobreposição Lateral: (Área de interseção gerada por UnaryUnion com todos vizinhos a Leste/Oeste / Área total) * 100
+    - Vetor de Direção: Avaliação de vizinhança baseada no deslocamento (dx, dy) dos centroides.
 
 Autor: Mestrado - Scripts para QGIS (Agente Gerador)
-Data: 22/04/2026
+Data: 2026
 """
 
 from qgis.core import (
@@ -38,9 +40,9 @@ from datetime import datetime
 
 class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
 
-    # ======================================
-    # INICIALIZAÇÃO DE PARÂMETROS CONSTANTES
-    # ======================================
+    # =========================================================================
+    # DEFINIÇÃO DE CONSTANTES DE PARÂMETROS
+    # =========================================================================
     INPUT_LAYER = 'INPUT_LAYER'
     FIELD_NAME = 'FIELD_NAME'
     LONG_TARGET = 'LONG_TARGET'
@@ -49,6 +51,9 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
     OUTPUT_LAYER = 'OUTPUT_LAYER'
     OUTPUT_REPORT = 'OUTPUT_REPORT'
 
+    # =========================================================================
+    # MÉTODOS OBRIGATÓRIOS DA API QGIS
+    # =========================================================================
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
 
@@ -67,6 +72,9 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
     def groupId(self):
         return 'fiscalizacao_sei'
 
+    # =========================================================================
+    # INICIALIZAÇÃO DE PARÂMETROS
+    # =========================================================================
     def initAlgorithm(self, config=None):
         self.addParameter(QgsProcessingParameterVectorLayer(self.INPUT_LAYER, self.tr("Camada de Polígonos (Footprints)"), types=[QgsProcessing.TypeVectorPolygon]))
         self.addParameter(QgsProcessingParameterField(self.FIELD_NAME, self.tr("Campo com o nome da imagem/arquivo"), parentLayerParameterName=self.INPUT_LAYER))
@@ -77,6 +85,9 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT_LAYER, self.tr("Camada de Auditoria Espacial")))
         self.addParameter(QgsProcessingParameterFileDestination(self.OUTPUT_REPORT, self.tr("Relatório de Reprovações (.txt)"), fileFilter='Text files (*.txt)'))
 
+    # =========================================================================
+    # MÉTODO PRINCIPAL DE PROCESSAMENTO
+    # =========================================================================
     def processAlgorithm(self, parameters, context, feedback):
         source = self.parameterAsVectorLayer(parameters, self.INPUT_LAYER, context)
         campo_id = self.parameterAsString(parameters, self.FIELD_NAME, context)
@@ -85,17 +96,19 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
         tolerancia = self.parameterAsDouble(parameters, self.TOLERANCE, context)
         caminho_relatorio = self.parameterAsFileOutput(parameters, self.OUTPUT_REPORT, context)
 
-        # ======================================
+        # --------------------------------------------------------------------
         # VALIDAÇÃO DE CRS (UTM)
-        # ======================================
+        # --------------------------------------------------------------------
         if source.crs().isGeographic() or source.crs().mapUnits() != QgsUnitTypes.DistanceMeters:
             raise QgsProcessingException(self.tr("ERRO CRÍTICO: A camada deve estar em coordenadas planimétricas (UTM - Metros). O código não pode prosseguir."))
 
-        # Define apenas o limite inferior
+        # Limite inferior aceitável
         lim_long_min = long_alvo - tolerancia
         lim_lat_min = lat_alvo - tolerancia
 
-        # PREPARAR CAMPOS DE SAÍDA (Preservando os originais)
+        # --------------------------------------------------------------------
+        # PREPARAR CAMPOS DE SAÍDA
+        # --------------------------------------------------------------------
         in_fields = source.fields()
         out_fields = QgsFields()
         
@@ -105,8 +118,10 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
         new_fields = [
             QgsField('sob_long_N', QVariant.Double), QgsField('sob_long_S', QVariant.Double),
             QgsField('sob_lat_L', QVariant.Double), QgsField('sob_lat_O', QVariant.Double),
-            QgsField('qc_long', QVariant.String), QgsField('qc_lat', QVariant.String)
+            QgsField('qc_long_N', QVariant.String), QgsField('qc_long_S', QVariant.String),
+            QgsField('qc_lat_L', QVariant.String), QgsField('qc_lat_O', QVariant.String)
         ]
+        
         for field in new_fields: 
             out_fields.append(field)
 
@@ -131,13 +146,17 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
                 
                 val_n, val_s, val_l, val_o = self._calcular_sobreposicoes(geom, fid, index, dicionario_feicoes)
 
-                # Valida apenas com base no limite mínimo exigido
-                status_long = self._validar(max(val_n, val_s), lim_long_min)
-                status_lat = self._validar(max(val_l, val_o), lim_lat_min)
+                # Validação independente para cada direção
+                status_n = self._validar(val_n, lim_long_min)
+                status_s = self._validar(val_s, lim_long_min)
+                status_l = self._validar(val_l, lim_lat_min)
+                status_o = self._validar(val_o, lim_lat_min)
 
                 erros = []
-                if status_long: erros.append(f"Longitudinal ({max(val_n, val_s):.1f}%) -> {status_long}")
-                if status_lat: erros.append(f"Lateral ({max(val_l, val_o):.1f}%) -> {status_lat}")
+                if status_n: erros.append(f"Norte ({val_n:.1f}%)")
+                if status_s: erros.append(f"Sul ({val_s:.1f}%)")
+                if status_l: erros.append(f"Leste ({val_l:.1f}%)")
+                if status_o: erros.append(f"Oeste ({val_o:.1f}%)")
                 
                 if erros:
                     reprovacoes[nome_foto] = erros
@@ -150,8 +169,10 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
                     val_s, 
                     val_l, 
                     val_o,
-                    status_long if status_long else 'OK',
-                    status_lat if status_lat else 'OK'
+                    status_n,
+                    status_s,
+                    status_l,
+                    status_o
                 ]
                 
                 out_feat.setAttributes(atributos_completos)
@@ -167,10 +188,9 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
 
         return {self.OUTPUT_LAYER: dest_id, self.OUTPUT_REPORT: caminho_relatorio}
 
-    # ======================================
-    # MÉTODOS DE CÁLCULO E AUDITORIA
-    # ======================================
-
+    # =========================================================================
+    # MÉTODOS AUXILIARES DE CÁLCULO E AUDITORIA
+    # =========================================================================
     def _calcular_sobreposicoes(self, geom, fid, index, dict_feicoes):
         centro = geom.centroid().asPoint()
         ids_vizinhos = index.intersects(geom.boundingBox())
@@ -226,8 +246,9 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
         return val_n, val_s, val_l, val_o
 
     def _validar(self, valor, limite_inferior):
-        if valor == 0.0: return "Reprovado (Sem Sobreposição - Gap Absoluto)"
-        if valor < limite_inferior: return "Reprovado (Abaixo da Tolerância - Gap Relativo)"
+        """Retorna 'Reprovado' se o valor não atingir a tolerância, senão retorna nulo (None)"""
+        if valor < limite_inferior: 
+            return "Reprovado"
         return None
 
     def _gerar_relatorio_txt(self, path, reprovacoes, long, lat, tol):
@@ -243,7 +264,7 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
                 f.write("---------------------------------------------------------------\n\n")
 
                 if not reprovacoes:
-                    f.write("✓ SUCESSO: Todas as fotos atingem ou superam a sobreposição mínima exigida.\n")
+                    f.write("✓ SUCESSO: Todas as fotos atingem ou superam a sobreposição mínima exigida em todas as direções.\n")
                 else:
                     f.write(f"{'FOTO / IMAGEM':<40} | {'INCONFORMIDADES DETECTADAS'}\n")
                     f.write("-" * 80 + "\n")
