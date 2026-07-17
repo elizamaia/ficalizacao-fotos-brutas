@@ -8,6 +8,7 @@ Lógica rigorosa de cálculo:
     - Lateral: Interseção com todos os vizinhos a Leste e Oeste, gerando uma 
       geometria única (Merge/UnaryUnion) antes do cálculo final.
     - Classificação baseada no vetor de deslocamento (dx, dy) dos centroides.
+    - Validação: Acusa erro apenas se a sobreposição for nula ou inferior ao limite mínimo aceitável.
 
 Autor: Mestrado - Scripts para QGIS (Agente Gerador)
 Data: 22/04/2026
@@ -22,7 +23,6 @@ from qgis.core import (
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterFileDestination,
     QgsProcessingException,
-    QgsWkbTypes,
     QgsField,
     QgsFields,
     QgsSpatialIndex,
@@ -32,13 +32,15 @@ from qgis.core import (
     QgsFeature
 )
 from qgis.PyQt.QtCore import QCoreApplication, QVariant
-import os
 import math
 from datetime import datetime
 
 
 class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
 
+    # ======================================
+    # INICIALIZAÇÃO DE PARÂMETROS CONSTANTES
+    # ======================================
     INPUT_LAYER = 'INPUT_LAYER'
     FIELD_NAME = 'FIELD_NAME'
     LONG_TARGET = 'LONG_TARGET'
@@ -70,7 +72,7 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterField(self.FIELD_NAME, self.tr("Campo com o nome da imagem/arquivo"), parentLayerParameterName=self.INPUT_LAYER))
         self.addParameter(QgsProcessingParameterNumber(self.LONG_TARGET, self.tr("Sobreposição Longitudinal Alvo (%)"), defaultValue=60))
         self.addParameter(QgsProcessingParameterNumber(self.LAT_TARGET, self.tr("Sobreposição Lateral Alvo (%)"), defaultValue=30))
-        self.addParameter(QgsProcessingParameterNumber(self.TOLERANCE, self.tr("Limite de Tolerância (± %)"), defaultValue=3))
+        self.addParameter(QgsProcessingParameterNumber(self.TOLERANCE, self.tr("Limite de Tolerância (- %)"), defaultValue=3))
         
         self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT_LAYER, self.tr("Camada de Auditoria Espacial")))
         self.addParameter(QgsProcessingParameterFileDestination(self.OUTPUT_REPORT, self.tr("Relatório de Reprovações (.txt)"), fileFilter='Text files (*.txt)'))
@@ -89,8 +91,9 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
         if source.crs().isGeographic() or source.crs().mapUnits() != QgsUnitTypes.DistanceMeters:
             raise QgsProcessingException(self.tr("ERRO CRÍTICO: A camada deve estar em coordenadas planimétricas (UTM - Metros). O código não pode prosseguir."))
 
-        lim_long = (long_alvo - tolerancia, long_alvo + tolerancia)
-        lim_lat = (lat_alvo - tolerancia, lat_alvo + tolerancia)
+        # Define apenas o limite inferior
+        lim_long_min = long_alvo - tolerancia
+        lim_lat_min = lat_alvo - tolerancia
 
         # PREPARAR CAMPOS DE SAÍDA (Preservando os originais)
         in_fields = source.fields()
@@ -111,10 +114,7 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
 
         feedback.pushInfo("Construindo índice espacial e dicionário...")
         
-        # CORREÇÃO DEFINITIVA: Passa o iterador nativo do QGIS diretamente pro Índice Espacial
         index = QgsSpatialIndex(source.getFeatures())
-        
-        # Constrói o dicionário para a lógica matemática de vizinhança
         dicionario_feicoes = {f.id(): f for f in source.getFeatures()}
         total = len(dicionario_feicoes)
         
@@ -125,35 +125,41 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
         for i, (fid, feat) in enumerate(dicionario_feicoes.items()):
             if feedback.isCanceled(): break
 
-            geom = feat.geometry()
-            nome_foto = str(feat[campo_id]) if feat[campo_id] else f"Feicao_{fid}"
-            
-            val_n, val_s, val_l, val_o = self._calcular_sobreposicoes(geom, fid, index, dicionario_feicoes)
+            try:
+                geom = feat.geometry()
+                nome_foto = str(feat[campo_id]) if feat[campo_id] else f"Feicao_{fid}"
+                
+                val_n, val_s, val_l, val_o = self._calcular_sobreposicoes(geom, fid, index, dicionario_feicoes)
 
-            status_long = self._validar(max(val_n, val_s), lim_long)
-            status_lat = self._validar(max(val_l, val_o), lim_lat)
+                # Valida apenas com base no limite mínimo exigido
+                status_long = self._validar(max(val_n, val_s), lim_long_min)
+                status_lat = self._validar(max(val_l, val_o), lim_lat_min)
 
-            erros = []
-            if status_long: erros.append(f"Longitudinal ({max(val_n, val_s):.1f}%) -> {status_long}")
-            if status_lat: erros.append(f"Lateral ({max(val_l, val_o):.1f}%) -> {status_lat}")
-            
-            if erros:
-                reprovacoes[nome_foto] = erros
+                erros = []
+                if status_long: erros.append(f"Longitudinal ({max(val_n, val_s):.1f}%) -> {status_long}")
+                if status_lat: erros.append(f"Lateral ({max(val_l, val_o):.1f}%) -> {status_lat}")
+                
+                if erros:
+                    reprovacoes[nome_foto] = erros
 
-            out_feat = QgsFeature(out_fields)
-            out_feat.setGeometry(geom)
-            
-            atributos_completos = feat.attributes() + [
-                val_n, 
-                val_s, 
-                val_l, 
-                val_o,
-                status_long if status_long else 'OK',
-                status_lat if status_lat else 'OK'
-            ]
-            
-            out_feat.setAttributes(atributos_completos)
-            sink.addFeature(out_feat, QgsFeatureSink.FastInsert)
+                out_feat = QgsFeature(out_fields)
+                out_feat.setGeometry(geom)
+                
+                atributos_completos = feat.attributes() + [
+                    val_n, 
+                    val_s, 
+                    val_l, 
+                    val_o,
+                    status_long if status_long else 'OK',
+                    status_lat if status_lat else 'OK'
+                ]
+                
+                out_feat.setAttributes(atributos_completos)
+                sink.addFeature(out_feat, QgsFeatureSink.FastInsert)
+
+            except Exception as e:
+                feedback.reportError(f"Falha ao processar feição {fid}: {str(e)}")
+                reprovacoes[f"Feicao_{fid}"] = [f"ERRO DE PROCESSAMENTO: {str(e)}"]
 
             feedback.setProgress(int((i / total) * 100))
 
@@ -219,30 +225,32 @@ class AnaliseSobreposicaoEspacial(QgsProcessingAlgorithm):
 
         return val_n, val_s, val_l, val_o
 
-    def _validar(self, valor, limites):
-        if valor == 0.0: return "Reprovado (Sem Sobreposição)"
-        if valor < limites[0]: return "Reprovado (Abaixo da Tolerância)"
-        if valor > limites[1]: return "Reprovado (Acima da Tolerância)"
+    def _validar(self, valor, limite_inferior):
+        if valor == 0.0: return "Reprovado (Sem Sobreposição - Gap Absoluto)"
+        if valor < limite_inferior: return "Reprovado (Abaixo da Tolerância - Gap Relativo)"
         return None
 
     def _gerar_relatorio_txt(self, path, reprovacoes, long, lat, tol):
         agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write("===============================================================\n")
-            f.write("       RELATÓRIO DE AUDITORIA DE SOBREPOSIÇÃO ESPACIAL\n")
-            f.write("===============================================================\n")
-            f.write(f"Data: {agora}\n")
-            f.write(f"Configuração Alvo: Longitudinal {long}% | Lateral {lat}% (Tolerância ±{tol}%)\n")
-            f.write(f"Total de Fotos com Inconformidade: {len(reprovacoes)}\n")
-            f.write("---------------------------------------------------------------\n\n")
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write("===============================================================\n")
+                f.write("       RELATÓRIO DE AUDITORIA DE SOBREPOSIÇÃO ESPACIAL\n")
+                f.write("===============================================================\n")
+                f.write(f"Data: {agora}\n")
+                f.write(f"Requisito Mínimo: Longitudinal {long-tol}% | Lateral {lat-tol}%\n")
+                f.write(f"Total de Fotos com Inconformidade: {len(reprovacoes)}\n")
+                f.write("---------------------------------------------------------------\n\n")
 
-            if not reprovacoes:
-                f.write("✓ SUCESSO: Todas as fotos estão dentro dos limites de tolerância.\n")
-            else:
-                f.write(f"{'FOTO / IMAGEM':<40} | {'INCONFORMIDADES DETECTADAS'}\n")
-                f.write("-" * 80 + "\n")
-                for foto, erros in sorted(reprovacoes.items()):
-                    f.write(f"{foto:<40} | {' e '.join(erros)}\n")
-            
-            f.write("\n---------------------------------------------------------------\n")
-            f.write("Fim do Relatório de Fiscalização SEI.\n")
+                if not reprovacoes:
+                    f.write("✓ SUCESSO: Todas as fotos atingem ou superam a sobreposição mínima exigida.\n")
+                else:
+                    f.write(f"{'FOTO / IMAGEM':<40} | {'INCONFORMIDADES DETECTADAS'}\n")
+                    f.write("-" * 80 + "\n")
+                    for foto, erros in sorted(reprovacoes.items()):
+                        f.write(f"{foto:<40} | {' e '.join(erros)}\n")
+                
+                f.write("\n---------------------------------------------------------------\n")
+                f.write("Fim do Relatório de Fiscalização SEI.\n")
+        except IOError as e:
+            raise QgsProcessingException(f"Erro ao salvar o relatório: {str(e)}")
