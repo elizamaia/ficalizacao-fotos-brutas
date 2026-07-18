@@ -42,6 +42,7 @@ O objeivo desta etapa é validar a metodologia proposta através de uma avaliaç
 * **scripts/01_conformidade_tecnica/**: Rotinas para extração de metadados e verificação dos parâmetros técnicos. Esses scripts foram escritos para serem utilizados na caixa de ferramentas do software de SIG Qgis.
 * **scripts/02_analise_visual/**: Scripts para pré-processamento, treinamento e inferência de modelos de análise visual. Esses scipts foram escritos para serem utilizados em algum ambiente de desenvolvimento através de alguma IDE. Por exemplo, nem toda sombra vai impossibilitar a fotointerpretação da imagem para a geração de cartografia de referência.
 * **prompts**: Prompts de agentes de criação dos scripts da pesquisa.
+* **designer-de-modelo-qgis**: Projetos do Model Designer do Qgis.
 
 ---
 
