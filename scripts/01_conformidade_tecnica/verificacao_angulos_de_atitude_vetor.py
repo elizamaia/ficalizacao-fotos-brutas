@@ -8,7 +8,7 @@ em limites de inclinação (tilt) e deriva (yaw drift).
 
 Cálculos:
     - Tilt: √(ω² + φ²) - magnitude do vetor de inclinação
-    - Deriva: |κ - median(κ)| - normalizado para ângulos circulares 0-360°
+    - Deriva: Cálculo vetorial (Ângulo Duplo) para normalizar inversões de sentido de voo.
 
 Autor: Fiscalização Mapeamento SEI
 Data: 2026
@@ -238,7 +238,7 @@ class AnaliseQualidadeVooVetor(QgsProcessingAlgorithm):
             # 3. Leitura e extração para DataFrame Pandas
             df = self._extrair_feicoes_para_dataframe(source, params['colunas'], total_feicoes, feedback)
 
-            # 4. Cálculo de métricas
+            # 4. Cálculo de métricas (com estatística direcional para Kappa)
             df = self._calcular_metricas(df, feedback)
 
             # Validar se há faixas vazias
@@ -339,7 +339,7 @@ class AnaliseQualidadeVooVetor(QgsProcessingAlgorithm):
         return df
 
     def _calcular_metricas(self, df, feedback):
-        """Calcula tilt e deriva baseando-se nos atributos extraídos."""
+        """Calcula tilt e deriva baseando-se nos atributos extraídos utilizando estatística direcional."""
         # Limpeza de linhas inválidas
         linhas_antes = len(df)
         df = df.dropna(subset=['W', 'P', 'K'])
@@ -362,12 +362,35 @@ class AnaliseQualidadeVooVetor(QgsProcessingAlgorithm):
         if len(kappa_fora) > 0:
             feedback.pushWarning(self.tr(f"{len(kappa_fora)} valores de KAPPA fora do range esperado (0° a 360°)."))
 
-        # Cálculos matemáticos
+        # -------------------------------------------------------------------
+        # CÁLCULO DE TILT
+        # -------------------------------------------------------------------
         df['tilt_calc'] = np.sqrt(df['W']**2 + df['P']**2)
         
-        medias_k = df.groupby('Faixa')['K'].transform('median')
-        diffs = (df['K'] - medias_k).abs()
-        df['deriva_calc'] = np.where(diffs > 180, 360 - diffs, diffs)
+        # -------------------------------------------------------------------
+        # CALCULO DE DERIVA (ROBUSTO PARA INVERSÃO DE SENTIDO DE VOO)
+        # -------------------------------------------------------------------
+        # 1. Transformar Kappa para radianos e dobrar o ângulo (N-S e S-N ficam iguais)
+        k_rad_duplo = np.radians(df['K'] * 2)
+
+        # 2. Extrair componentes X e Y do vetor para evitar o problema do limite 0/360
+        df['k_x'] = np.cos(k_rad_duplo)
+        df['k_y'] = np.sin(k_rad_duplo)
+
+        # 3. Calcular a média vetorial por faixa
+        media_x = df.groupby('Faixa')['k_x'].transform('mean')
+        media_y = df.groupby('Faixa')['k_y'].transform('mean')
+
+        # 4. Recuperar o ângulo médio da linha (dividindo por 2) e mapear para 0-180
+        angulo_medio_rad = np.arctan2(media_y, media_x) / 2.0
+        angulo_medio_graus = np.degrees(angulo_medio_rad) % 180 
+
+        # 5. Calcular a diferença absoluta (Deriva) limitando ao menor caminho
+        diffs = (df['K'] % 180 - angulo_medio_graus).abs()
+        df['deriva_calc'] = np.where(diffs > 90, 180 - diffs, diffs)
+
+        # Limpar colunas temporárias
+        df = df.drop(columns=['k_x', 'k_y'])
 
         return df
 
