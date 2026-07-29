@@ -8,10 +8,10 @@ em limites de inclinação (tilt) e deriva (yaw drift).
 
 Cálculos:
     - Tilt: √(ω² + φ²) - magnitude do vetor de inclinação
-    - Deriva: |κ - median(κ)| - normalizado para ângulos circulares 0-360°
+    - Deriva: Cálculo vetorial (Ângulo Duplo) para normalizar inversões de sentido de voo.
 
-Autor: Versão Refatorada
-Data: 2025
+Autor: Fiscalização Mapeamento SEI
+Data: 2026
 """
 
 from qgis.core import (
@@ -112,14 +112,6 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
     def initAlgorithm(self, config=None):
         """
         Inicializa os parâmetros do algoritmo.
-
-        Define 14 parâmetros organizados em 6 categorias:
-        1. Arquivos (pasta de entrada)
-        2. Mapeamento de colunas
-        3. Configuração de texto (separadores)
-        4. Configuração de faixa
-        5. Limites de qualidade
-        6. Arquivo de saída
         """
         # --------------------------------------------------------------------
         # 1. ARQUIVOS (PASTA DE ENTRADA)
@@ -272,14 +264,6 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
     def processAlgorithm(self, parameters, context, feedback):
         """
         Executa o algoritmo de análise de qualidade de voo.
-
-        Args:
-            parameters: Dicionário de parâmetros do QGIS
-            context: Contexto de processamento do QGIS
-            feedback: Objeto de feedback para progresso e mensagens
-
-        Returns:
-            dict: Dicionário com o caminho do arquivo de saída
         """
         # --------------------------------------------------------------------
         # RECUPERAÇÃO E VALIDAÇÃO DE PARÂMETROS
@@ -335,12 +319,7 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
     # =========================================================================
 
     def _recuperar_parametros(self, parameters, context):
-        """
-        Recupera e organiza os parâmetros do algoritmo.
-
-        Returns:
-            dict: Dicionário com todos os parâmetros organizados
-        """
+        """Recupera e organiza os parâmetros do algoritmo."""
         return {
             'pasta': self.parameterAsString(parameters, self.INPUT_FOLDER, context),
             'arquivo_saida': self.parameterAsString(parameters, self.OUTPUT_REPORT, context),
@@ -365,17 +344,7 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
         }
 
     def _validar_parametros(self, params, feedback):
-        """
-        Valida os parâmetros de entrada.
-
-        Args:
-            params (dict): Dicionário de parâmetros
-            feedback: Objeto de feedback do QGIS
-
-        Raises:
-            QgsProcessingException: Se validação falhar
-        """
-        # Validar índices de faixa
+        """Valida os parâmetros de entrada."""
         f_ini = params['faixa']['inicio']
         f_fim = params['faixa']['fim']
 
@@ -389,7 +358,6 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
                 self.tr("Índice inicial da faixa não pode ser negativo")
             )
 
-        # Validar limites (devem ser positivos)
         for chave, valor in params['limites'].items():
             if valor <= 0:
                 raise QgsProcessingException(
@@ -397,19 +365,7 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
                 )
 
     def _listar_arquivos(self, pasta, feedback):
-        """
-        Lista todos os arquivos válidos na pasta.
-
-        Args:
-            pasta (str): Caminho da pasta
-            feedback: Objeto de feedback do QGIS
-
-        Returns:
-            list: Lista de caminhos de arquivos
-
-        Raises:
-            QgsProcessingException: Se nenhum arquivo encontrado
-        """
+        """Lista todos os arquivos válidos na pasta."""
         arquivos = (
             glob.glob(os.path.join(pasta, "*.txt")) +
             glob.glob(os.path.join(pasta, "*.csv"))
@@ -423,15 +379,7 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
         return arquivos
 
     def _criar_cabecalho(self, params):
-        """
-        Cria o cabeçalho do relatório.
-
-        Args:
-            params (dict): Dicionário de parâmetros
-
-        Returns:
-            str: Cabeçalho formatado
-        """
+        """Cria o cabeçalho do relatório."""
         linhas = [
             "=" * 80,
             self.tr("RELATÓRIO DE CONTROLE DE QUALIDADE DE VOO"),
@@ -455,24 +403,12 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
         return "\n".join(linhas)
 
     def _processar_arquivo(self, caminho_arquivo, params, feedback):
-        """
-        Processa um arquivo individual de relatório de voo.
-
-        Args:
-            caminho_arquivo (str): Caminho do arquivo
-            params (dict): Parâmetros de processamento
-            feedback: Objeto de feedback
-
-        Returns:
-            list: Lista de strings com o resultado do processamento
-        """
+        """Processa um arquivo individual de relatório de voo."""
         nome_arquivo = os.path.basename(caminho_arquivo)
         resultado = []
 
         try:
-            # ----------------------------------------------------------------
-            # LEITURA E PREPARAÇÃO DOS DADOS
-            # ----------------------------------------------------------------
+            # Leitura e preparação dos dados
             df = self._ler_arquivo(caminho_arquivo, params, feedback)
 
             # Validar colunas
@@ -493,9 +429,7 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
                 .str[params['faixa']['inicio']:params['faixa']['fim']]
             )
 
-            # ----------------------------------------------------------------
-            # CÁLCULO DE MÉTRICAS
-            # ----------------------------------------------------------------
+            # Cálculo de métricas (Tilt e Deriva)
             df = self._calcular_metricas(df, params, feedback, nome_arquivo)
 
             # Validar se há faixas vazias
@@ -505,17 +439,13 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
                     self.tr(f"{len(faixas_vazias)} fotos com faixa vazia em {nome_arquivo}")
                 )
 
-            # ----------------------------------------------------------------
-            # ANÁLISE POR FAIXA
-            # ----------------------------------------------------------------
+            # Análise por faixa
             resumo_faixas = df.groupby('Faixa').agg({
                 'tilt_calc': 'mean',
                 'deriva_calc': 'mean'
             }).reset_index()
 
-            # ----------------------------------------------------------------
-            # VALIDAÇÃO DE QUALIDADE
-            # ----------------------------------------------------------------
+            # Validação de Qualidade
             validacao = self._validar_qualidade(
                 df,
                 resumo_faixas,
@@ -523,9 +453,7 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
                 feedback
             )
 
-            # ----------------------------------------------------------------
-            # MONTAGEM DO RELATÓRIO
-            # ----------------------------------------------------------------
+            # Montagem do relatório
             resultado.extend(self._criar_relatorio_arquivo(
                 nome_arquivo,
                 df,
@@ -557,17 +485,7 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
         return resultado
 
     def _ler_arquivo(self, caminho, params, feedback):
-        """
-        Lê arquivo CSV/TXT com tratamento de erros.
-
-        Args:
-            caminho (str): Caminho do arquivo
-            params (dict): Parâmetros de configuração
-            feedback: Objeto de feedback
-
-        Returns:
-            pd.DataFrame: DataFrame com os dados
-        """
+        """Lê arquivo CSV/TXT com tratamento de erros."""
         df = pd.read_csv(
             caminho,
             sep=params['separador'],
@@ -578,23 +496,11 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
             on_bad_lines='warn'
         )
 
-        # Remover espaços dos nomes das colunas
         df.columns = df.columns.str.strip()
-
         return df
 
     def _validar_colunas(self, df, params, feedback):
-        """
-        Valida se as colunas necessárias existem no DataFrame.
-
-        Args:
-            df (pd.DataFrame): DataFrame a validar
-            params (dict): Parâmetros com nomes das colunas
-            feedback: Objeto de feedback
-
-        Returns:
-            bool: True se colunas existem, False caso contrário
-        """
+        """Valida se as colunas necessárias existem no DataFrame."""
         colunas_necessarias = [
             params['colunas']['id'],
             params['colunas']['omega'],
@@ -615,16 +521,7 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
         return True
 
     def _padronizar_colunas(self, df, params):
-        """
-        Renomeia colunas para nomes padronizados internos.
-
-        Args:
-            df (pd.DataFrame): DataFrame original
-            params (dict): Parâmetros com mapeamento de colunas
-
-        Returns:
-            pd.DataFrame: DataFrame com colunas renomeadas
-        """
+        """Renomeia colunas para nomes padronizados internos."""
         mapeamento = {
             params['colunas']['id']: 'ID',
             params['colunas']['omega']: 'W',
@@ -635,27 +532,10 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
         return df.rename(columns=mapeamento)
 
     def _calcular_metricas(self, df, params, feedback, nome_arquivo):
-        """
-        Calcula tilt e deriva para cada foto.
-
-        Cálculos:
-            - Tilt: √(ω² + φ²)
-            - Deriva: |κ - median(κ)| normalizado para 0-180°
-
-        Args:
-            df (pd.DataFrame): DataFrame com dados brutos
-            params (dict): Parâmetros de configuração
-            feedback: Objeto de feedback
-            nome_arquivo (str): Nome do arquivo para mensagens
-
-        Returns:
-            pd.DataFrame: DataFrame com colunas de métricas adicionadas
-        """
-        # Converter para numérico
+        """Calcula tilt e deriva aplicando a lógica do ângulo duplo."""
         for col in ['W', 'P', 'K']:
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        # Remover linhas com valores inválidos
         linhas_antes = len(df)
         df = df.dropna(subset=['W', 'P', 'K'])
         linhas_depois = len(df)
@@ -663,52 +543,48 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
         if linhas_antes > linhas_depois:
             removidas = linhas_antes - linhas_depois
             feedback.pushWarning(
-                self.tr(f"{removidas} linhas com valores inválidos removidas em {nome_arquivo}")
+                self.tr(f"{removidas} linhas com valores nulos removidas em {nome_arquivo}")
             )
 
-        # Validar ranges de ângulos
         omega_fora = df[df['W'].abs() > 180]
         phi_fora = df[df['P'].abs() > 180]
         kappa_fora = df[(df['K'] < 0) | (df['K'] > 360)]
 
         if len(omega_fora) > 0:
-            feedback.pushWarning(
-                self.tr(f"{len(omega_fora)} valores de OMEGA fora do range esperado (-180° a 180°)")
-            )
-
+            feedback.pushWarning(self.tr(f"{len(omega_fora)} valores de OMEGA fora do range (-180° a 180°)"))
         if len(phi_fora) > 0:
-            feedback.pushWarning(
-                self.tr(f"{len(phi_fora)} valores de PHI fora do range esperado (-180° a 180°)")
-            )
-
+            feedback.pushWarning(self.tr(f"{len(phi_fora)} valores de PHI fora do range (-180° a 180°)"))
         if len(kappa_fora) > 0:
-            feedback.pushWarning(
-                self.tr(f"{len(kappa_fora)} valores de KAPPA fora do range esperado (0° a 360°)")
-            )
+            feedback.pushWarning(self.tr(f"{len(kappa_fora)} valores de KAPPA fora do range (0° a 360°)"))
 
-        # Calcular Tilt: √(ω² + φ²)
+        # -------------------------------------------------------------------
+        # CÁLCULO DE TILT
+        # -------------------------------------------------------------------
         df['tilt_calc'] = np.sqrt(df['W']**2 + df['P']**2)
 
-        # Calcular Deriva: |κ - median(κ)| normalizado
-        medias_k = df.groupby('Faixa')['K'].transform('median')
-        diffs = (df['K'] - medias_k).abs()
-        df['deriva_calc'] = np.where(diffs > 180, 360 - diffs, diffs)
+        # -------------------------------------------------------------------
+        # CALCULO DE DERIVA (ROBUSTO PARA INVERSÃO DE SENTIDO DE VOO)
+        # -------------------------------------------------------------------
+        k_rad_duplo = np.radians(df['K'] * 2)
+
+        df['k_x'] = np.cos(k_rad_duplo)
+        df['k_y'] = np.sin(k_rad_duplo)
+
+        media_x = df.groupby('Faixa')['k_x'].transform('mean')
+        media_y = df.groupby('Faixa')['k_y'].transform('mean')
+
+        angulo_medio_rad = np.arctan2(media_y, media_x) / 2.0
+        angulo_medio_graus = np.degrees(angulo_medio_rad) % 180 
+
+        diffs = (df['K'] % 180 - angulo_medio_graus).abs()
+        df['deriva_calc'] = np.where(diffs > 90, 180 - diffs, diffs)
+
+        df = df.drop(columns=['k_x', 'k_y'])
 
         return df
 
     def _validar_qualidade(self, df, resumo_faixas, limites, feedback):
-        """
-        Valida métricas contra limites de qualidade.
-
-        Args:
-            df (pd.DataFrame): DataFrame com métricas calculadas
-            resumo_faixas (pd.DataFrame): Resumo por faixa
-            limites (dict): Limites de qualidade
-            feedback: Objeto de feedback
-
-        Returns:
-            dict: Dicionário com DataFrames de violações
-        """
+        """Valida métricas contra limites de qualidade."""
         return {
             'tilt_foto': df[df['tilt_calc'] > limites['tilt_foto']],
             'deriva_foto': df[df['deriva_calc'] > limites['deriva_foto']],
@@ -717,19 +593,7 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
         }
 
     def _criar_relatorio_arquivo(self, nome_arquivo, df, resumo, validacao, limites):
-        """
-        Cria o relatório de análise de um arquivo.
-
-        Args:
-            nome_arquivo (str): Nome do arquivo
-            df (pd.DataFrame): DataFrame completo
-            resumo (pd.DataFrame): Resumo por faixa
-            validacao (dict): Resultados da validação
-            limites (dict): Limites de qualidade
-
-        Returns:
-            list: Lista de strings do relatório
-        """
+        """Cria o relatório de análise de um arquivo."""
         linhas = [
             "",
             self.tr("ANÁLISE: {}").format(nome_arquivo),
@@ -806,13 +670,7 @@ class AnaliseQualidadeVoo(QgsProcessingAlgorithm):
         return linhas
 
     def _escrever_relatorio(self, caminho_saida, buffer):
-        """
-        Escreve o relatório completo em arquivo.
-
-        Args:
-            caminho_saida (str): Caminho do arquivo de saída
-            buffer (list): Buffer com linhas do relatório
-        """
+        """Escreve o relatório completo em arquivo."""
         try:
             with open(caminho_saida, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(buffer))
