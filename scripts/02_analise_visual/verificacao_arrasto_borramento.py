@@ -21,9 +21,9 @@ import os
 import glob
 from datetime import datetime
 import numpy as np
-import cv2
-from osgeo import gdal
 from scipy.stats import skew, kurtosis, trim_mean
+from scipy.ndimage import convolve
+from osgeo import gdal
 
 from qgis.core import (
     QgsProcessing,
@@ -41,8 +41,8 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
     Algoritmo de análise quantitativa de arrasto em fotografias aéreas brutas.
 
     Processa arquivos GeoTIFF (.tif/.tiff) extraindo recortes de amostragem (512x512)
-    em grade 3x3, calcula as métricas direcionais de Sobel 5x5 com binarização automática 
-    de Otsu e agrega os resultados pelo método Trimmean.
+    em grade 3x3, calcula as métricas direcionais via matriz de convolução (Sobel 5x5) 
+    e agregação estatística independente de bibliotecas externas.
     """
 
     # =========================================================================
@@ -58,15 +58,7 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
     # =========================================================================
 
     def tr(self, string):
-        """
-        Traduz string usando o sistema de internacionalização do QGIS.
-
-        Args:
-            string (str): String a ser traduzida.
-
-        Returns:
-            str: String traduzida para o idioma atual do QGIS.
-        """
+        """Traduz string usando o sistema de internacionalização do QGIS."""
         return QCoreApplication.translate('DetectorArrastoTakahashi', string)
 
     def createInstance(self):
@@ -103,18 +95,7 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
     # =========================================================================
 
     def initAlgorithm(self, config=None):
-        """
-        Inicializa os parâmetros do algoritmo.
-
-        Define 3 parâmetros organizados nas seguintes categorias:
-        1. Pasta de entrada das fotografias
-        2. Limiares de avaliação técnica
-        3. Arquivo de saída do relatório
-        """
-        # ======================================
-        # INICIALIZAÇÃO DE PARÂMETROS
-        # ======================================
-
+        """Inicializa os parâmetros do algoritmo."""
         # 1. Pasta com Fotografias Aéreas Brutas
         self.addParameter(
             QgsProcessingParameterFile(
@@ -149,18 +130,8 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
     # =========================================================================
 
     def processAlgorithm(self, parameters, context, feedback):
-        """
-        Executa a rotina central de detecção de arrasto em lote.
-
-        Args:
-            parameters (dict): Dicionário de parâmetros do QGIS.
-            context (QgsProcessingContext): Contexto de processamento.
-            feedback (QgsProcessingFeedback): Interface de progresso e log.
-
-        Returns:
-            dict: Dicionário contendo o caminho do arquivo de relatório final.
-        """
-        # 1. Recuperação e validação inicial dos parâmetros
+        """Executa a rotina central de detecção de arrasto em lote."""
+        # 1. Recuperação e validação inicial
         params = self._recuperar_parametros(parameters, context)
         self._validar_parametros(params, feedback)
         
@@ -176,7 +147,7 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
 
         resultados_fotos = []
 
-        # 4. Loop de processamento de arquivos com tratamento de erros robusto
+        # 4. Iteração segura das imagens
         for idx, caminho_foto in enumerate(lista_imagens):
             if feedback.isCanceled():
                 break
@@ -203,18 +174,15 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
                 feedback.reportError(msg_erro)
                 resultados_fotos.append((nome_foto, -1.0, msg_erro))
 
-            # Atualização da barra de progresso
             feedback.setProgress(int(((idx + 1) / total_fotos) * 100))
 
         # 5. Formatação do corpo e encerramento do relatório
         buffer_relatorio.append(self._formatar_corpo_relatorio(resultados_fotos))
         
-        # 6. Escrita do arquivo em disco
+        # 6. Gravação do arquivo
         self._escrever_relatorio(params['caminho_relatorio'], buffer_relatorio)
 
         feedback.pushInfo(self.tr(f"✓ Processamento concluído com sucesso: {total_fotos} fotografia(s) auditada(s)."))
-        feedback.pushInfo(self.tr(f"Relatório gerado em: {params['caminho_relatorio']}"))
-
         return {self.OUTPUT_REPORT: params['caminho_relatorio']}
 
     # =========================================================================
@@ -252,10 +220,7 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         return sorted(list(set(arquivos)))
 
     def _processar_imagem(self, caminho_foto, feedback):
-        """
-        Abre a imagem via GDAL, amostra 9 recortes (512x512) em grade 3x3 e 
-        calcula o valor final de avaliação agregado por Média Aparada (Trimmean).
-        """
+        """Abre a imagem via GDAL, amostra 9 recortes e calcula o valor final por Trimmean."""
         ds = gdal.Open(caminho_foto, gdal.GA_ReadOnly)
         if ds is None:
             raise IOError(f"Não foi possível abrir a imagem via GDAL: {caminho_foto}")
@@ -263,7 +228,7 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         largura = ds.RasterXSize
         altura = ds.RasterYSize
         banda = ds.GetRasterBand(1).ReadAsArray()
-        ds = None  # Libera a memória do dataset
+        ds = None
 
         tamanho_crop = 512
         xs = [int(largura * 0.2), int(largura * 0.5), int(largura * 0.8)]
@@ -285,7 +250,6 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         if not valores_crops:
             raise ValueError(f"Dimensões da fotografia ({largura}x{altura}) insuficientes para amostragem 512x512.")
 
-        # Agregação via Média Aparada (Trimmean - descarta menor e maior valor)
         if len(valores_crops) > 2:
             eval_final = trim_mean(valores_crops, proportiontocut=1.0 / len(valores_crops))
         else:
@@ -295,21 +259,29 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
 
     def _calcular_takahashi_crop(self, img_crop):
         """
-        Calcula o Evaluation Value de um crop 512x512 conforme Takahashi et al. (2020).
-        
-        Aplica derivativas de Sobel 5x5, variância circular, histograma direcional 36 bins,
-        partição via Otsu e análise de curtose e assimetria.
+        Calcula o Evaluation Value de um crop 512x512 conforme Takahashi et al. (2020),
+        reescrito 100% com Numpy/SciPy para garantir compatibilidade nativa no QGIS.
         """
-        # 1. Filtro de Sobel (Derivadas parciais gH e gV em janela 5x5)
-        gH = cv2.Sobel(img_crop, cv2.CV_64F, 1, 0, ksize=5)
-        gV = cv2.Sobel(img_crop, cv2.CV_64F, 0, 1, ksize=5)
+        # 1. Matrizes do Filtro de Sobel 5x5
+        sobel_x = np.array([
+            [-1, -2, 0,  2,  1],
+            [-4, -8, 0,  8,  4],
+            [-6,-12, 0, 12,  6],
+            [-4, -8, 0,  8,  4],
+            [-1, -2, 0,  2,  1]
+        ], dtype=float)
+        sobel_y = sobel_x.T
 
-        # 2. Magnitude (nabla I) e Direção (nabla theta)
+        # Aplica a convolução
+        gH = convolve(img_crop.astype(float), sobel_x)
+        gV = convolve(img_crop.astype(float), sobel_y)
+
+        # 2. Magnitude (nabla I) e Direção
         magnitude = np.sqrt(gH**2 + gV**2)
         mean_magnitude = np.mean(magnitude)
 
         if mean_magnitude == 0:
-            return 0.0  # Área completamente homogênea / sem textura
+            return 0.0
 
         direcao_rad = np.arctan2(gV, gH)
         direcao_deg = np.degrees(direcao_rad) % 360
@@ -319,27 +291,40 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         s_bar = np.mean(np.sin(direcao_rad))
         variancia_circular = 1.0 - np.sqrt(c_bar**2 + s_bar**2)
 
-        # 4. Histograma Direcional (36 bins de 10 graus cada)
+        # 4. Histograma Direcional (36 bins de 10 graus)
         counts, _ = np.histogram(direcao_deg, bins=36, range=(0, 360))
 
         # 5. Normalização: Rotaciona a partir do ângulo de menor frequência
         min_idx = np.argmin(counts)
         counts_rot = np.roll(counts, -min_idx)
 
-        # 6. Partição Automática por Limiarização de Otsu
-        counts_norm = cv2.normalize(counts_rot, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        _, _ = cv2.threshold(counts_norm, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        # 6. Partição de Otsu Nativa (Maximização da variância interclasses)
+        best_var = -1
+        best_t = 18
+        total_bins = len(counts_rot)
+        
+        for t in range(1, total_bins):
+            mean1 = np.mean(counts_rot[:t])
+            mean2 = np.mean(counts_rot[t:])
+            var_between = t * (total_bins - t) * (mean1 - mean2)**2
+            
+            if var_between > best_var:
+                best_var = var_between
+                best_t = t
 
-        regiao1 = counts_rot[:18]
-        regiao2 = counts_rot[18:]
+        # Garante tamanho mínimo nas amostras para evitar falha no kurtosis
+        best_t = max(3, min(best_t, 33))
 
-        # 7. Curtose e Assimetria nas Regiões
+        regiao1 = counts_rot[:best_t]
+        regiao2 = counts_rot[best_t:]
+
+        # 7. Curtose e Assimetria
         kurt1 = kurtosis(regiao1, fisher=False)
         kurt2 = kurtosis(regiao2, fisher=False)
         skew1 = skew(regiao1)
         skew2 = skew(regiao2)
 
-        # 8. Cálculo do Valor de Avaliação (Evaluation Value)
+        # 8. Cálculo Final do Valor de Avaliação
         diferenca_curtose = abs((kurt1 + kurt2) - 3.0)
         diferenca_assimetria = abs(skew1 - skew2)
 
