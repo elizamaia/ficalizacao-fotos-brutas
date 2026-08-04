@@ -2,28 +2,19 @@
 """
 Plugin QGIS para Detecção de Arrasto (Motion Blur) em Fotografias Aéreas Brutas
 
-Este algoritmo avalia a nitidez e detecta o borramento por movimento (arrasto)
-em fotografias aéreas brutas utilizando estatística direcional do gradiente
-de Sobel em amostragem em grade 3x3 com agregação via Média Aparada (Trimmean),
-seguindo a metodologia de Takahashi et al. (2020).
+Este algoritmo processa arquivos GeoTIFF e gera um relatório de controle de 
+qualidade baseado na metodologia de estatística direcional do gradiente de 
+Sobel (Takahashi et al., 2020) para detectar anomalias visuais de arrasto.
 
-Metodologia e Referências:
-    - Takahashi, Y., Kuhara, C., & Chikatsu, H. (2020). Image blur detection 
-      method based on gradient information in directional statistics. 
-      The International Archives of the Photogrammetry, Remote Sensing and 
-      Spatial Information Sciences, XLIII-B2-2020, 91-95.
-      
-Projeto de Pesquisa:
-    - Dissertação de Mestrado de Eliza Silva Maia (PPEC/UFBA - 2026).
+Cálculos:
+    - Normalização: Escalonamento radiométrico de 16 bits para 8 bits na memória.
+    - Avaliação: Extração de amostras 3x3, convolução de Sobel 5x5, variância 
+      circular e partição de Otsu.
+    - Agregação: Média Aparada (Trimmean).
+
+Autor: Eliza Silva Maia (PPEC/UFBA)
+Data: 2026
 """
-
-import os
-import glob
-from datetime import datetime
-import numpy as np
-from scipy.stats import skew, kurtosis, trim_mean
-from scipy.ndimage import convolve
-from osgeo import gdal
 
 from qgis.core import (
     QgsProcessing,
@@ -34,31 +25,49 @@ from qgis.core import (
     QgsProcessingException
 )
 from qgis.PyQt.QtCore import QCoreApplication
+import numpy as np
+from scipy.stats import skew, kurtosis, trim_mean
+from scipy.ndimage import convolve
+from osgeo import gdal
+import os
+import glob
+from datetime import datetime
 
 
 class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
     """
     Algoritmo de análise quantitativa de arrasto em fotografias aéreas brutas.
 
-    Processa arquivos GeoTIFF (.tif/.tiff) extraindo recortes de amostragem (512x512)
-    em grade 3x3, calcula as métricas direcionais via matriz de convolução (Sobel 5x5) 
-    e agregação estatística independente de bibliotecas externas.
+    Este processador avalia múltiplos arquivos TIFF/GeoTIFF, extrai recortes 
+    de amostragem e valida a nitidez contra limites de qualidade (Evaluation Value)
+    especificados pelo usuário.
     """
 
     # =========================================================================
     # DEFINIÇÃO DE CONSTANTES DE PARÂMETROS
     # =========================================================================
 
+    # Entrada e Saída
     INPUT_FOLDER = 'INPUT_FOLDER'
-    EVALUATION_THRESHOLD = 'EVALUATION_THRESHOLD'
     OUTPUT_REPORT = 'OUTPUT_REPORT'
+
+    # Limites de Qualidade
+    EVALUATION_THRESHOLD = 'EVALUATION_THRESHOLD'
 
     # =========================================================================
     # MÉTODOS OBRIGATÓRIOS DA API QGIS
     # =========================================================================
 
     def tr(self, string):
-        """Traduz string usando o sistema de internacionalização do QGIS."""
+        """
+        Traduz string usando o sistema de internacionalização do QGIS.
+
+        Args:
+            string (str): String a ser traduzida
+
+        Returns:
+            str: String traduzida para o idioma atual do QGIS
+        """
         return QCoreApplication.translate('DetectorArrastoTakahashi', string)
 
     def createInstance(self):
@@ -70,7 +79,7 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         return 'detector_arrasto_takahashi'
 
     def displayName(self):
-        """Retorna o nome exibido do algoritmo na Caixa de Ferramentas."""
+        """Retorna o nome exibido do algoritmo."""
         return self.tr('Fotos Brutas - Imagem - Arrasto')
 
     def group(self):
@@ -81,22 +90,22 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         """Retorna o ID do grupo."""
         return 'fiscalizacao_sei'
 
-    def shortHelpString(self):
-        """Retorna a documentação resumida para a interface do QGIS."""
-        return self.tr(
-            "Avalia a nitidez e detecta o borramento por movimento (arrasto) "
-            "em fotografias aéreas brutas utilizando estatística direcional do gradiente "
-            "de Sobel em amostragem 3x3 com agregação via Trimmean.\n\n"
-            "Desenvolvido para a pesquisa de Mestrado de Eliza Silva Maia (PPEC/UFBA)."
-        )
-
     # =========================================================================
     # INICIALIZAÇÃO DE PARÂMETROS
     # =========================================================================
 
     def initAlgorithm(self, config=None):
-        """Inicializa os parâmetros do algoritmo."""
-        # 1. Pasta com Fotografias Aéreas Brutas
+        """
+        Inicializa os parâmetros do algoritmo.
+
+        Define 3 parâmetros organizados em 3 categorias:
+        1. Arquivos (pasta de entrada)
+        2. Limites de qualidade
+        3. Arquivo de saída
+        """
+        # --------------------------------------------------------------------
+        # 1. ARQUIVOS (PASTA DE ENTRADA)
+        # --------------------------------------------------------------------
         self.addParameter(
             QgsProcessingParameterFile(
                 self.INPUT_FOLDER,
@@ -105,23 +114,27 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
             )
         )
 
-        # 2. Limiar Mínimo de Avaliação
+        # --------------------------------------------------------------------
+        # 2. LIMITES DE QUALIDADE
+        # --------------------------------------------------------------------
         self.addParameter(
             QgsProcessingParameterNumber(
                 self.EVALUATION_THRESHOLD,
-                self.tr('Limiar Mínimo de Avaliação para Reprovação por Arrasto (Evaluation Value)'),
+                self.tr('Limite de Avaliação para Reprovação (Evaluation Value)'),
                 type=QgsProcessingParameterNumber.Double,
                 defaultValue=1.0,
                 minValue=0.1
             )
         )
 
-        # 3. Relatório de Saída TXT
+        # --------------------------------------------------------------------
+        # 3. ARQUIVO DE SAÍDA
+        # --------------------------------------------------------------------
         self.addParameter(
             QgsProcessingParameterFileDestination(
                 self.OUTPUT_REPORT,
-                self.tr('Arquivo de Saída do Relatório TXT'),
-                fileFilter='Text Files (*.txt)'
+                self.tr('Salvar Relatório Final em (.txt)'),
+                fileFilter='Arquivos de Texto (*.txt)'
             )
         )
 
@@ -130,83 +143,134 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
     # =========================================================================
 
     def processAlgorithm(self, parameters, context, feedback):
-        """Executa a rotina central de detecção de arrasto em lote."""
-        # 1. Recuperação e validação inicial
+        """
+        Executa o algoritmo de detecção quantitativa de arrasto.
+
+        Args:
+            parameters: Dicionário de parâmetros do QGIS
+            context: Contexto de processamento do QGIS
+            feedback: Objeto de feedback para progresso e mensagens
+
+        Returns:
+            dict: Dicionário com o caminho do arquivo de saída
+        """
+        # --------------------------------------------------------------------
+        # RECUPERAÇÃO E VALIDAÇÃO DE PARÂMETROS
+        # --------------------------------------------------------------------
         params = self._recuperar_parametros(parameters, context)
         self._validar_parametros(params, feedback)
         
         gdal.UseExceptions()
 
-        # 2. Listagem das fotografias
-        lista_imagens = self._listar_arquivos(params['pasta_imagens'], feedback)
-        total_fotos = len(lista_imagens)
+        # --------------------------------------------------------------------
+        # LISTA DE ARQUIVOS PARA PROCESSAMENTO
+        # --------------------------------------------------------------------
+        lista_arquivos = self._listar_arquivos(params['pasta'], feedback)
 
-        # 3. Inicialização do relatório
+        # --------------------------------------------------------------------
+        # INICIALIZAÇÃO DO RELATÓRIO
+        # --------------------------------------------------------------------
+        total_arquivos = len(lista_arquivos)
         buffer_relatorio = []
-        buffer_relatorio.append(self._criar_cabecalho(params, total_fotos))
+        buffer_relatorio.append(self._criar_cabecalho(params, total_arquivos))
 
         resultados_fotos = []
 
-        # 4. Iteração segura das imagens
-        for idx, caminho_foto in enumerate(lista_imagens):
+        # --------------------------------------------------------------------
+        # PROCESSAMENTO DOS ARQUIVOS
+        # --------------------------------------------------------------------
+        for i, caminho_arquivo in enumerate(lista_arquivos):
             if feedback.isCanceled():
                 break
 
-            nome_foto = os.path.basename(caminho_foto)
+            nome_arquivo = os.path.basename(caminho_arquivo)
+            feedback.setProgress(int((i / total_arquivos) * 100))
 
             try:
-                eval_final = self._processar_imagem(caminho_foto, feedback)
+                # Processar arquivo individual
+                eval_final = self._processar_imagem(caminho_arquivo, feedback)
                 
                 if eval_final > params['limiar_critico']:
                     status = "[!] REPROVADO (ARRASTO DETECTADO)"
                 else:
                     status = "✓ APROVADO (NÍTIDO)"
 
-                resultados_fotos.append((nome_foto, eval_final, status))
+                resultados_fotos.append((nome_arquivo, eval_final, status))
 
             except IOError as e:
-                msg_erro = f"[ERRO LEITURA] Falha de I/O em {nome_foto}: {str(e)}"
-                feedback.reportError(msg_erro)
-                resultados_fotos.append((nome_foto, -1.0, msg_erro))
+                msg_erro = f"[ERRO LEITURA] Falha de I/O: {str(e)}"
+                feedback.reportError(self.tr(f"Erro de I/O em {nome_arquivo}: {e}"))
+                resultados_fotos.append((nome_arquivo, -1.0, msg_erro))
 
             except Exception as e:
-                msg_erro = f"[ERRO CRÍTICO] Falha no processamento de {nome_foto}: {str(e)}"
-                feedback.reportError(msg_erro)
-                resultados_fotos.append((nome_foto, -1.0, msg_erro))
+                msg_erro = f"[ERRO CRÍTICO] Falha inesperada: {str(e)}"
+                feedback.reportError(self.tr(f"Erro inesperado em {nome_arquivo}: {e}"))
+                resultados_fotos.append((nome_arquivo, -1.0, msg_erro))
 
-            feedback.setProgress(int(((idx + 1) / total_fotos) * 100))
-
-        # 5. Formatação do corpo e encerramento do relatório
+        # --------------------------------------------------------------------
+        # MONTAGEM E ESCRITA DO RELATÓRIO FINAL
+        # --------------------------------------------------------------------
         buffer_relatorio.append(self._formatar_corpo_relatorio(resultados_fotos))
-        
-        # 6. Gravação do arquivo
-        self._escrever_relatorio(params['caminho_relatorio'], buffer_relatorio)
+        self._escrever_relatorio(params['arquivo_saida'], buffer_relatorio)
 
-        feedback.pushInfo(self.tr(f"✓ Processamento concluído com sucesso: {total_fotos} fotografia(s) auditada(s)."))
-        return {self.OUTPUT_REPORT: params['caminho_relatorio']}
+        feedback.pushInfo(
+            self.tr(f"✓ Processamento concluído: {total_arquivos} fotografia(s) auditada(s)")
+        )
+
+        return {self.OUTPUT_REPORT: params['arquivo_saida']}
 
     # =========================================================================
-    # MÉTODOS AUXILIARES PRIVADOS
+    # MÉTODOS AUXILIARES
     # =========================================================================
 
     def _recuperar_parametros(self, parameters, context):
-        """Recupera e estrutura os parâmetros passados pela interface do QGIS."""
+        """
+        Recupera e organiza os parâmetros do algoritmo.
+
+        Returns:
+            dict: Dicionário com todos os parâmetros organizados
+        """
         return {
-            'pasta_imagens': self.parameterAsString(parameters, self.INPUT_FOLDER, context),
+            'pasta': self.parameterAsString(parameters, self.INPUT_FOLDER, context),
             'limiar_critico': self.parameterAsDouble(parameters, self.EVALUATION_THRESHOLD, context),
-            'caminho_relatorio': self.parameterAsFileOutput(parameters, self.OUTPUT_REPORT, context)
+            'arquivo_saida': self.parameterAsString(parameters, self.OUTPUT_REPORT, context)
         }
 
     def _validar_parametros(self, params, feedback):
-        """Valida a coerência dos parâmetros informados."""
-        if not params['pasta_imagens'] or not os.path.exists(params['pasta_imagens']):
-            raise QgsProcessingException(self.tr("A pasta de imagens informada é inválida ou não existe."))
+        """
+        Valida os parâmetros de entrada.
+
+        Args:
+            params (dict): Dicionário de parâmetros
+            feedback: Objeto de feedback do QGIS
+
+        Raises:
+            QgsProcessingException: Se validação falhar
+        """
+        if not params['pasta'] or not os.path.exists(params['pasta']):
+            raise QgsProcessingException(
+                self.tr("A pasta de imagens informada é inválida ou não existe.")
+            )
 
         if params['limiar_critico'] <= 0:
-            raise QgsProcessingException(self.tr("O Limiar Crítico de Avaliação deve ser maior que zero."))
+            raise QgsProcessingException(
+                self.tr("O limite de avaliação deve ser maior que zero.")
+            )
 
     def _listar_arquivos(self, pasta, feedback):
-        """Varre a pasta informada buscando arquivos GeoTIFF de imagem aérea."""
+        """
+        Lista todos os arquivos válidos na pasta.
+
+        Args:
+            pasta (str): Caminho da pasta
+            feedback: Objeto de feedback do QGIS
+
+        Returns:
+            list: Lista de caminhos de arquivos
+
+        Raises:
+            QgsProcessingException: Se nenhum arquivo encontrado
+        """
         extensoes = ('*.tif', '*.tiff', '*.geotiff', '*.TIF', '*.TIFF')
         arquivos = []
         for ext in extensoes:
@@ -214,16 +278,25 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
 
         if not arquivos:
             raise QgsProcessingException(
-                self.tr(f"Nenhuma imagem GeoTIFF encontrada na pasta: {pasta}")
+                self.tr(f"Nenhum arquivo TIFF encontrado em: {pasta}")
             )
 
         return sorted(list(set(arquivos)))
 
     def _processar_imagem(self, caminho_foto, feedback):
-        """Abre a imagem via GDAL, amostra 9 recortes e calcula o valor final por Trimmean."""
+        """
+        Abre a imagem, extrai amostragem em grade e calcula a agregação Trimmean.
+
+        Args:
+            caminho_foto (str): Caminho absoluto da imagem
+            feedback: Objeto de feedback
+
+        Returns:
+            float: Valor final de avaliação
+        """
         ds = gdal.Open(caminho_foto, gdal.GA_ReadOnly)
         if ds is None:
-            raise IOError(f"Não foi possível abrir a imagem via GDAL: {caminho_foto}")
+            raise IOError(self.tr("Falha ao abrir imagem via GDAL."))
 
         largura = ds.RasterXSize
         altura = ds.RasterYSize
@@ -248,7 +321,7 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
                     valores_crops.append(val)
 
         if not valores_crops:
-            raise ValueError(f"Dimensões da fotografia ({largura}x{altura}) insuficientes para amostragem 512x512.")
+            raise ValueError(self.tr(f"Dimensões insuficientes para amostragem 512x512 ({largura}x{altura})."))
 
         if len(valores_crops) > 2:
             eval_final = trim_mean(valores_crops, proportiontocut=1.0 / len(valores_crops))
@@ -259,10 +332,26 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
 
     def _calcular_takahashi_crop(self, img_crop):
         """
-        Calcula o Evaluation Value de um crop 512x512 conforme Takahashi et al. (2020),
-        reescrito 100% com Numpy/SciPy para garantir compatibilidade nativa no QGIS.
+        Calcula o Evaluation Value de um crop, aplicando normalização 16 bits para 8 bits.
+
+        Args:
+            img_crop (np.array): Matriz 512x512 bruta
+
+        Returns:
+            float: Valor de avaliação para o recorte
         """
-        # 1. Matrizes do Filtro de Sobel 5x5
+        # ----------------------------------------------------------------
+        # NORMALIZAÇÃO RADIOMÉTRICA (16-bit -> 8-bit dinâmico)
+        # ----------------------------------------------------------------
+        min_val, max_val = img_crop.min(), img_crop.max()
+        if max_val > min_val:
+            img_crop_norm = ((img_crop.astype(float) - min_val) / (max_val - min_val) * 255.0)
+        else:
+            img_crop_norm = img_crop.astype(float)
+
+        # ----------------------------------------------------------------
+        # CÁLCULO DE MÉTRICAS (SOBEL 5x5)
+        # ----------------------------------------------------------------
         sobel_x = np.array([
             [-1, -2, 0,  2,  1],
             [-4, -8, 0,  8,  4],
@@ -272,11 +361,9 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         ], dtype=float)
         sobel_y = sobel_x.T
 
-        # Aplica a convolução
-        gH = convolve(img_crop.astype(float), sobel_x)
-        gV = convolve(img_crop.astype(float), sobel_y)
+        gH = convolve(img_crop_norm, sobel_x)
+        gV = convolve(img_crop_norm, sobel_y)
 
-        # 2. Magnitude (nabla I) e Direção
         magnitude = np.sqrt(gH**2 + gV**2)
         mean_magnitude = np.mean(magnitude)
 
@@ -286,19 +373,15 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         direcao_rad = np.arctan2(gV, gH)
         direcao_deg = np.degrees(direcao_rad) % 360
 
-        # 3. Variância Circular (sigma^2_theta)
         c_bar = np.mean(np.cos(direcao_rad))
         s_bar = np.mean(np.sin(direcao_rad))
         variancia_circular = 1.0 - np.sqrt(c_bar**2 + s_bar**2)
 
-        # 4. Histograma Direcional (36 bins de 10 graus)
         counts, _ = np.histogram(direcao_deg, bins=36, range=(0, 360))
 
-        # 5. Normalização: Rotaciona a partir do ângulo de menor frequência
         min_idx = np.argmin(counts)
         counts_rot = np.roll(counts, -min_idx)
 
-        # 6. Partição de Otsu Nativa (Maximização da variância interclasses)
         best_var = -1
         best_t = 18
         total_bins = len(counts_rot)
@@ -312,19 +395,16 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
                 best_var = var_between
                 best_t = t
 
-        # Garante tamanho mínimo nas amostras para evitar falha no kurtosis
         best_t = max(3, min(best_t, 33))
 
         regiao1 = counts_rot[:best_t]
         regiao2 = counts_rot[best_t:]
 
-        # 7. Curtose e Assimetria
         kurt1 = kurtosis(regiao1, fisher=False)
         kurt2 = kurtosis(regiao2, fisher=False)
         skew1 = skew(regiao1)
         skew2 = skew(regiao2)
 
-        # 8. Cálculo Final do Valor de Avaliação
         diferenca_curtose = abs((kurt1 + kurt2) - 3.0)
         diferenca_assimetria = abs(skew1 - skew2)
 
@@ -333,58 +413,81 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         return max(0.0, float(evaluation_value))
 
     def _criar_cabecalho(self, params, total_fotos):
-        """Cria o cabeçalho padronizado do relatório final de auditoria."""
-        agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        """
+        Cria o cabeçalho do relatório de auditoria.
+
+        Args:
+            params (dict): Dicionário de parâmetros
+            total_fotos (int): Quantidade de imagens
+
+        Returns:
+            str: Cabeçalho formatado
+        """
         linhas = [
-            "==================================================================================",
-            " PPEC/UFBA - RELATÓRIO DE AVALIAÇÃO DE ARRASTO (MOTION BLUR)",
-            " Metodologia: Estatística Direcional de Takahashi et al. (2020)",
-            " Pesquisa: Dissertação de Mestrado de Eliza Silva Maia (PPEC/UFBA)",
-            "==================================================================================",
-            f"Data/Hora do Processamento: {agora}",
-            f"Diretório Analisado: {params['pasta_imagens']}",
-            f"Total de Fotografias Auditadas: {total_fotos}",
-            "",
-            "PARÂMETROS DE CONFIGURAÇÃO:",
-            f"  • Limiar Mínimo de Avaliação (Evaluation Value): {params['limiar_critico']:.2f}",
-            "  • Amostragem: Grade 3x3 de Crops (512x512 px) com Agregação via Trimmean",
-            "==================================================================================",
+            "=" * 80,
+            self.tr("RELATÓRIO DE AVALIAÇÃO DE ARRASTO (MOTION BLUR)"),
+            self.tr(f"Data/Hora: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"),
+            "=" * 80,
+            self.tr("PARÂMETROS DE CONFIGURAÇÃO:"),
+            f"  • Diretório: {params['pasta']}",
+            f"  • Fotografias Auditadas: {total_fotos}",
+            f"  • Limite de Reprovação (Evaluation Value): {params['limiar_critico']:.2f}",
+            f"  • Amostragem: Grade 3x3 de Crops (512x512) com Trimmean",
+            "=" * 80,
             ""
         ]
+
         return "\n".join(linhas)
 
     def _formatar_corpo_relatorio(self, resultados):
-        """Formata os dados de resultados de auditoria por imagem no relatório."""
+        """
+        Formata os dados de resultados por imagem.
+
+        Args:
+            resultados (list): Lista de tuplas com os resultados processados
+
+        Returns:
+            str: Corpo do relatório formatado
+        """
         reprovadas = [r for r in resultados if "[!]" in r[2]]
         aprovadas = [r for r in resultados if "✓" in r[2]]
 
         linhas = [
-            "SÍNTESE DA INSPEÇÃO VISUAL:",
+            self.tr("📊 SÍNTESE DA INSPEÇÃO VISUAL"),
             f"  • Fotografias Aprovadas (Nítidas): {len(aprovadas)}",
             f"  • Fotografias Reprovadas (Com Arrasto): {len(reprovadas)}",
             "",
-            "----------------------------------------------------------------------------------",
-            "DETALHAMENTO POR FOTOGRAFIA AÉREA BRUTA:",
-            "----------------------------------------------------------------------------------"
+            "-" * 80,
+            self.tr("DETALHAMENTO POR FOTOGRAFIA AÉREA BRUTA"),
+            "-" * 80,
         ]
 
         for foto, val, status in resultados:
             if val >= 0:
-                linhas.append(f" Imagem: {foto:<40} | Evaluation Value: {val:7.3f} | Status: {status}")
+                linhas.append(f" Imagem: {foto:<40} | Eval: {val:7.3f} | Status: {status}")
             else:
                 linhas.append(f" Imagem: {foto:<40} | Status: {status}")
 
         linhas.extend([
-            "==================================================================================",
-            "FIM DO RELATÓRIO"
+            "",
+            "=" * 80,
+            self.tr("FIM DO RELATÓRIO")
         ])
 
         return "\n".join(linhas)
 
     def _escrever_relatorio(self, caminho_saida, buffer):
-        """Salva o buffer com todas as linhas do relatório em um arquivo texto de saída."""
+        """
+        Escreve o relatório completo em arquivo.
+
+        Args:
+            caminho_saida (str): Caminho do arquivo de saída
+            buffer (list): Buffer com linhas do relatório
+        """
         try:
             with open(caminho_saida, 'w', encoding='utf-8') as f:
-                f.write("\n".join(buffer) if isinstance(buffer, list) else buffer)
+                f.write('\n'.join(buffer))
         except IOError as e:
-            raise QgsProcessingException(self.tr(f"Erro ao gravar arquivo de relatório: {str(e)}"))
+            raise QgsProcessingException(
+                self.tr(f"Erro ao escrever arquivo de saída: {str(e)}")
+            )
