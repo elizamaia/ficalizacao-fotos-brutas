@@ -46,6 +46,14 @@ O objeivo desta etapa é validar a metodologia proposta através de uma avaliaç
 
 ---
 
+## Como usar os scripts no Qgis (versões 3.x)
+
+Baixe os arquivo .py e os copie para a o diretório: C:\Users\seuusuario\AppData\Roaming\QGIS\QGIS3\profiles\default\processing\scripts
+
+Os algoritmos apareceção na sessão "Scripts" da Caixa de Ferramentas de Processamento. 
+
+---
+
 ## Status da Dissertação
 
 * A pesquisa encontra-se na fase de qualificação, com previsão de encerramento em Março de 2027.
