@@ -7,7 +7,7 @@ qualidade baseado na metodologia de estatística direcional do gradiente de
 Sobel (Takahashi et al., 2020) para detectar anomalias visuais de arrasto.
 
 Cálculos:
-    - Normalização: Escalonamento radiométrico de 16 bits para 8 bits na memória.
+    - Normalização: Escalonamento radiométrico direto de 16 bits para 8 bits na memória.
     - Avaliação: Extração de amostras 3x3, convolução de Sobel 5x5, variância 
       circular e partição de Otsu.
     - Agregação: Média Aparada (Trimmean).
@@ -341,11 +341,10 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
             float: Valor de avaliação para o recorte
         """
         # ----------------------------------------------------------------
-        # NORMALIZAÇÃO RADIOMÉTRICA (16-bit -> 8-bit dinâmico)
+        # NORMALIZAÇÃO RADIOMÉTRICA DIRETA (Preserva o contraste real de 16-bit em escala 8-bit)
         # ----------------------------------------------------------------
-        min_val, max_val = img_crop.min(), img_crop.max()
-        if max_val > min_val:
-            img_crop_norm = ((img_crop.astype(float) - min_val) / (max_val - min_val) * 255.0)
+        if img_crop.dtype == np.uint16 or img_crop.max() > 255:
+            img_crop_norm = img_crop.astype(float) / 256.0
         else:
             img_crop_norm = img_crop.astype(float)
 
