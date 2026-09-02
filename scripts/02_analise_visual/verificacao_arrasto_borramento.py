@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 Plugin QGIS para Detecção de Arrasto (Motion Blur) em Fotografias Aéreas Brutas
-com Extração de Keypoints, Leitura por Janela (Big Earth Data) e Relatório Hierárquico.
+com Extração de Keypoints, Leitura por Janela (Big Earth Data) e Laudo Técnico Sobrio.
 
-Estrutura do Laudo Técnico:
+Estrutura do Laudo Técnico de Fiscalização:
     1. Parâmetros de Configuração e Metadados da Auditoria
-    2. Painel de Triagem Imediata: Apenas Fotografias Reprovadas e Inconsistentes
-    3. Detalhamento Integral: Listagem Sequencial de Todas as Fotografias
-    4. Síntese Estatística Consolidada
+    2. Painel de Triagem Inicial: Fotografias Não Conformes e Inconsistentes
+    3. Detalhamento Integral: Registro Sequencial de Todas as Fotografias Auditadas
+    4. Síntese Estatística e Projeção de Conformidade
 
 Autor: Eliza Silva Maia (PPEC/UFBA)
 Data: 2026
@@ -48,7 +48,7 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         return 'detector_arrasto_takahashi'
 
     def displayName(self):
-        return self.tr('Fotos Brutas - Imagem - Arrasto (Triagem Executiva)')
+        return self.tr('Fotos Brutas - Imagem - Arrasto')
 
     def group(self):
         return self.tr('Fiscalização Mapeamento SEI')
@@ -68,7 +68,7 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterNumber(
                 self.EVALUATION_THRESHOLD,
-                self.tr('Limite de Avaliação para Reprovação (Evaluation Value)'),
+                self.tr('Limite Crítico de Reprovação (Evaluation Value)'),
                 type=QgsProcessingParameterNumber.Double,
                 defaultValue=0.30,
                 minValue=0.01
@@ -78,7 +78,7 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFileDestination(
                 self.OUTPUT_REPORT,
-                self.tr('Salvar Relatório Final em (.txt)'),
+                self.tr('Salvar Laudo Técnico em (.txt)'),
                 fileFilter='Arquivos de Texto (*.txt)'
             )
         )
@@ -110,11 +110,11 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
                 eval_final = self._processar_imagem_otimizada(caminho_arquivo)
                 
                 if eval_final > params['limiar_critico']:
-                    status = "[!] REPROVADO (ARRASTO DETECTADO)"
+                    status = "REPROVADO (ARRASTO DETECTADO)"
                     is_inconforme = True
                     total_reprovadas += 1
                 else:
-                    status = "✓ APROVADO (NÍTIDO)"
+                    status = "APROVADO (NITIDO)"
                     is_inconforme = False
                     total_aprovadas += 1
 
@@ -128,8 +128,8 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
 
             except Exception as e:
                 total_corrompidas += 1
-                msg_falha = f"[!] REPROVADO (ARQUIVO CORROMPIDO / ERRO I/O: {str(e)[:50]})"
-                feedback.reportError(self.tr(f"Falha física no arquivo {nome_arquivo}: {str(e)}"))
+                msg_falha = f"REPROVADO (FALHA DE LEITURA / ARQUIVO CORROMPIDO: {str(e)[:45]})"
+                feedback.reportError(self.tr(f"Falha fisica no arquivo {nome_arquivo}: {str(e)}"))
 
                 resultados.append({
                     'foto': nome_arquivo,
@@ -142,7 +142,6 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
             if i % 100 == 0:
                 gc.collect()
 
-        # Montagem do relatório completo
         buffer_relatorio = []
         buffer_relatorio.append(self._criar_cabecalho(params, total_arquivos, inicio_processamento))
         buffer_relatorio.append(self._criar_painel_reprovadas(resultados, params['limiar_critico']))
@@ -152,7 +151,7 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         self._escrever_relatorio(params['arquivo_saida'], buffer_relatorio)
 
         feedback.pushInfo(
-            self.tr(f"✓ Auditoria concluída: {total_arquivos} fotos | Aprovadas: {total_aprovadas} | Reprovadas: {total_reprovadas} | Falhas I/O: {total_corrompidas}")
+            self.tr(f"Auditoria concluida: {total_arquivos} fotos | Aprovadas: {total_aprovadas} | Reprovadas por Arrasto: {total_reprovadas} | Falhas de I/O: {total_corrompidas}")
         )
 
         return {self.OUTPUT_REPORT: params['arquivo_saida']}
@@ -166,9 +165,9 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
 
     def _validar_parametros(self, params, feedback):
         if not params['pasta'] or not os.path.exists(params['pasta']):
-            raise QgsProcessingException(self.tr("A pasta informada é inválida ou inacessível."))
+            raise QgsProcessingException(self.tr("A pasta informada e invalida ou inacessivel."))
         if params['limiar_critico'] <= 0:
-            raise QgsProcessingException(self.tr("O limite de avaliação deve ser superior a zero."))
+            raise QgsProcessingException(self.tr("O limite de avaliacao deve ser superior a zero."))
 
     def _listar_arquivos(self, pasta, feedback):
         extensoes = ('*.tif', '*.tiff', '*.geotiff', '*.TIF', '*.TIFF')
@@ -189,7 +188,7 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         try:
             ds = gdal.Open(caminho_foto, gdal.GA_ReadOnly)
             if ds is None:
-                raise IOError("GDAL não conseguiu obter descritor do arquivo.")
+                raise IOError("GDAL nao conseguiu obter descritor do arquivo.")
 
             largura = ds.RasterXSize
             altura = ds.RasterYSize
@@ -214,7 +213,7 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
             ds = None
 
         if not valores_crops:
-            raise ValueError("Dimensões insuficientes ou falha na leitura dos crops.")
+            raise ValueError("Dimensoes insuficientes ou falha na leitura dos recortes.")
 
         if len(valores_crops) > 2:
             eval_final = trim_mean(valores_crops, proportiontocut=1.0 / len(valores_crops))
@@ -224,13 +223,11 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         return float(eval_final)
 
     def _calcular_takahashi_crop(self, img_crop):
-        # 1. Normalização Radiométrica Direta (16-bit para escala de 8-bit)
         if img_crop.dtype == np.uint16 or img_crop.max() > 255:
             img_crop_norm = img_crop.astype(float) / 256.0
         else:
             img_crop_norm = img_crop.astype(float)
 
-        # 2. Convolução de Sobel 5x5
         sobel_x = np.array([
             [-1, -2, 0,  2,  1],
             [-4, -8, 0,  8,  4],
@@ -247,7 +244,6 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         direcao_rad = np.arctan2(gV, gH)
         direcao_deg = np.degrees(direcao_rad) % 360.0
 
-        # 3. Extração de Keypoints (Máximos Locais com Magnitude > 1.0)
         local_max = maximum_filter(img_crop_norm, size=5)
         keypoints_mask = (img_crop_norm == local_max) & (magnitude > 1.0)
 
@@ -261,18 +257,15 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         if mean_magnitude <= 0.0:
             return 0.0
 
-        # 4. Variância Circular dos Keypoints
         kp_rad = np.radians(kp_angles)
         c_bar = np.mean(np.cos(kp_rad))
         s_bar = np.mean(np.sin(kp_rad))
         variancia_circular = 1.0 - np.sqrt(c_bar**2 + s_bar**2)
 
-        # 5. Histograma Angular (36 bins)
         counts, _ = np.histogram(kp_angles, bins=36, range=(0, 360))
         min_idx = np.argmin(counts)
         counts_rot = np.roll(counts, -min_idx)
 
-        # 6. Partição de Otsu
         best_var = -1.0
         best_t = 18
         total_bins = len(counts_rot)
@@ -288,7 +281,6 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         regiao1 = counts_rot[:best_t]
         regiao2 = counts_rot[best_t:]
 
-        # 7. Momentos Estatísticos (Curtose e Assimetria)
         kurt1 = kurtosis(regiao1, fisher=False)
         kurt2 = kurtosis(regiao2, fisher=False)
         skew1 = skew(regiao1)
@@ -297,22 +289,21 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
         diferenca_curtose = abs((kurt1 + kurt2) - 3.0)
         diferenca_assimetria = abs(skew1 - skew2)
 
-        # 8. Métrica Final
         evaluation_value = ((diferenca_curtose - diferenca_assimetria) / mean_magnitude) * variancia_circular * 100.0
         return max(0.0, float(evaluation_value))
 
     def _criar_cabecalho(self, params, total_fotos, inicio):
         linhas = [
             "=" * 90,
-            self.tr("LAUDO DE FISCALIZAÇÃO CARTOGRÁFICA: NITIDEZ E BORRAMENTO POR MOVIMENTO (ARRASTO)"),
-            self.tr(f"Data/Hora de Início: {inicio.strftime('%d/%m/%Y %H:%M:%S')}"),
+            self.tr("LAUDO TECNICO DE FISCALIZACAO: NITIDEZ E DETECCAO DE ARRASTO (MOTION BLUR)"),
+            self.tr(f"Data/Hora de Inicio: {inicio.strftime('%d/%m/%Y %H:%M:%S')}"),
             "=" * 90,
-            self.tr("PARÂMETROS DA AUDITORIA:"),
-            f"  • Diretório Alvo: {params['pasta']}",
-            f"  • Volume Total de Fotografias Identificadas: {total_fotos}",
-            f"  • Limite Crítico de Reprovação (Evaluation Value): {params['limiar_critico']:.2f}",
-            f"  • Metodologia: Estatística Direcional com Keypoints (Takahashi et al., 2020; Maia et al., 2026)",
-            f"  • Amostragem Espacial: Grade Regular 3x3 de Crops (512x512) com Agregação Trimmean",
+            self.tr("PARAMETROS DE AUDITORIA:"),
+            f"  • Diretorio Alvo: {params['pasta']}",
+            f"  • Volume de Fotografias Auditadas: {total_fotos}",
+            f"  • Limite Critico de Reprovacao (Evaluation Value): {params['limiar_critico']:.2f}",
+            f"  • Fundamentacao Metodologica: Estatistica Direcional com Keypoints (Takahashi et al., 2020)",
+            f"  • Procedimento de Amostragem: Grade Regular 3x3 de Crops (512x512) com Agregacao Trimmean",
             "=" * 90,
             ""
         ]
@@ -321,16 +312,16 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
     def _criar_painel_reprovadas(self, resultados, limiar):
         inconformes = [r for r in resultados if r['inconforme']]
         linhas = [
-            "!" * 90,
-            self.tr("PAINEL DE TRIAGEM RÁPIDA: FOTOGRAFIAS REPROVADAS / INCONSISTENTES"),
-            f"Total de Ocorrências com Inconformidade: {len(inconformes)} fotografia(s)",
-            "!" * 90,
+            "-" * 90,
+            self.tr("PAINEL DE TRIAGEM PRELIMINAR: FOTOGRAFIAS REPROVADAS E INCONSISTENCIAS"),
+            f"Total de Ocorrencias Nao Conformes: {len(inconformes)} fotografia(s)",
+            "-" * 90,
         ]
 
         if not inconformes:
-            linhas.append(self.tr("  ✓ NENHUMA FOTOGRAFIA REPROVADA. Todas as imagens auditadas cumprem o critério de nitidez."))
+            linhas.append(self.tr("  CONFORME: Nenhuma fotografia apresentou indice de arrasto superior ao limite."))
         else:
-            linhas.append(f" {'FOTOGRAFIA AÉREA':<45} | {'EVAL VALUE':<12} | {'DIAGNÓSTICO':<25}")
+            linhas.append(f" {'FOTOGRAFIA AEREA':<45} | {'EVAL VALUE':<12} | {'STATUS':<25}")
             linhas.append("-" * 90)
             for r in inconformes:
                 eval_str = f"{r['eval']:7.3f}" if r['eval'] >= 0 else "    ---   "
@@ -342,9 +333,9 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
     def _criar_painel_todas(self, resultados):
         linhas = [
             "-" * 90,
-            self.tr("DETALHAMENTO INTEGRAL DE TODAS AS FOTOGRAFIAS AUDITADAS"),
+            self.tr("REGISTRO EXAUSTIVO DE TODAS AS FOTOGRAFIAS ANALISADAS"),
             "-" * 90,
-            f" {'FOTOGRAFIA AÉREA':<45} | {'EVAL VALUE':<12} | {'STATUS':<25}",
+            f" {'FOTOGRAFIA AEREA':<45} | {'EVAL VALUE':<12} | {'STATUS':<25}",
             "-" * 90
         ]
 
@@ -358,13 +349,13 @@ class DetectorArrastoTakahashi(QgsProcessingAlgorithm):
     def _criar_rodape(self, total, aprovadas, reprovadas, corrompidas):
         linhas = [
             "=" * 90,
-            self.tr("SÍNTESE ESTATÍSTICA CONSOLIDADA:"),
-            f"  • Fotografias Auditadas no Lote: {total}",
-            f"  • Fotografias Conformes (Nítidas): {aprovadas} ({(aprovadas/total*100 if total else 0):.2f}%)",
-            f"  • Fotografias com Arrasto Detectado: {reprovadas} ({(reprovadas/total*100 if total else 0):.2f}%)",
-            f"  • Fotografias Inconsistentes (Falha de I/O / Corrompidas): {corrompidas} ({(corrompidas/total*100 if total else 0):.2f}%)",
+            self.tr("SINTESE ESTATISTICA CONSOLIDADA:"),
+            f"  • Total de Fotografias no Lote: {total}",
+            f"  • Fotografias Conformes (Nitidas): {aprovadas} ({(aprovadas/total*100 if total else 0):.2f}%)",
+            f"  • Fotografias Reprovadas por Arrasto: {reprovadas} ({(reprovadas/total*100 if total else 0):.2f}%)",
+            f"  • Fotografias com Inconsistencia de I/O ou Arquivo: {corrompidas} ({(corrompidas/total*100 if total else 0):.2f}%)",
             "=" * 90,
-            self.tr(f"Data/Hora de Conclusão: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"),
+            self.tr(f"Data/Hora de Conclusao: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"),
             "=" * 90
         ]
         return "\n".join(linhas)
