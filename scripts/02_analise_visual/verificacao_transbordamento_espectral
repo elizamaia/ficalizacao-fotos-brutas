@@ -1,0 +1,299 @@
+# -*- coding: utf-8 -*-
+"""
+Plugin QGIS para Inspeção de Transbordamento Espectral em Fotografias Aéreas Brutas.
+
+Este algoritmo realiza a varredura amostral em blocos nas imagens para identificar 
+pixels onde exatamente 1 ou 2 bandas da composição RGB possuem valor igual a 0.
+A detecção sinaliza a anomalia (transbordamento espectral) sem interromper o 
+processamento do lote, gerando um relatório em texto exclusivamente com os 
+arquivos reprovados ou corrompidos.
+
+Autor: Agente Gerador de Plugins QGIS
+Data: 2026
+"""
+
+import os
+import glob
+from datetime import datetime
+import numpy as np
+from osgeo import gdal
+
+from qgis.core import (
+    QgsProcessing,
+    QgsProcessingAlgorithm,
+    QgsProcessingParameterFile,
+    QgsProcessingParameterFileDestination,
+    QgsProcessingParameterEnum,
+    QgsProcessingException
+)
+from qgis.PyQt.QtCore import QCoreApplication
+
+class AnaliseTransbordamentoEspectral(QgsProcessingAlgorithm):
+    """
+    Algoritmo para detecção de transbordamento espectral em imagens aéreas brutas.
+    Utiliza leitura por janelas (blocos) via GDAL para otimização de memória RAM
+    na análise de imagens pesadas, baseando-se em opções padronizadas de amostragem.
+    """
+
+    # =========================================================================
+    # DEFINIÇÃO DE CONSTANTES DE PARÂMETROS
+    # =========================================================================
+
+    INPUT_FOLDER = 'INPUT_FOLDER'
+    BLOCK_SIZE = 'BLOCK_SIZE'
+    STEP_SIZE = 'STEP_SIZE'
+    OUTPUT_REPORT = 'OUTPUT_REPORT'
+
+    # Opções padronizadas para as caixas de seleção na interface
+    OPCOES_BLOCO = ['256 px', '512 px', '1024 px', '2048 px']
+    VALORES_BLOCO = [256, 512, 1024, 2048]
+    
+    OPCOES_PASSO = ['256 px', '512 px', '1024 px', '2048 px', '4096 px']
+    VALORES_PASSO = [256, 512, 1024, 2048, 4096]
+
+    # =========================================================================
+    # MÉTODOS OBRIGATÓRIOS DA API QGIS
+    # =========================================================================
+
+    def tr(self, string):
+        """Traduz a string usando o sistema do QGIS."""
+        return QCoreApplication.translate('AnaliseTransbordamentoEspectral', string)
+
+    def createInstance(self):
+        """Cria uma nova instância do algoritmo."""
+        return AnaliseTransbordamentoEspectral()
+
+    def name(self):
+        """Retorna o identificador único do algoritmo."""
+        return 'inspecao_transbordamento_espectral'
+
+    def displayName(self):
+        """Retorna o nome exibido do algoritmo."""
+        return self.tr('Fotos Brutas - Imagem - Transbordamento Espectral')
+
+    def group(self):
+        """Retorna o grupo do algoritmo."""
+        return self.tr('Fiscalização Mapeamento SEI')
+
+    def groupId(self):
+        """Retorna o ID do grupo."""
+        return 'fiscalizacao_sei'
+
+    # =========================================================================
+    # INICIALIZAÇÃO DE PARÂMETROS
+    # =========================================================================
+
+    def initAlgorithm(self, config=None):
+        """Inicializa os parâmetros do algoritmo."""
+        
+        self.addParameter(
+            QgsProcessingParameterFile(
+                self.INPUT_FOLDER,
+                self.tr('Pasta Principal com as Fotografias (TIFF/GeoTIFF)'),
+                behavior=QgsProcessingParameterFile.Folder
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                self.BLOCK_SIZE,
+                self.tr('Tamanho da Janela de Amostragem (Bloco)'),
+                options=self.OPCOES_BLOCO,
+                defaultValue=1  # Índice 1 corresponde a '512 px'
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                self.STEP_SIZE,
+                self.tr('Intervalo de Passo - Stride'),
+                options=self.OPCOES_PASSO,
+                defaultValue=1  # Índice 1 corresponde a '512 px' (Varredura contígua para bloco 512)
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterFileDestination(
+                self.OUTPUT_REPORT,
+                self.tr('Salvar Relatório Final em (.txt)'),
+                fileFilter='Arquivos de Texto (*.txt)'
+            )
+        )
+
+    # =========================================================================
+    # MÉTODO PRINCIPAL DE PROCESSAMENTO
+    # =========================================================================
+
+    def processAlgorithm(self, parameters, context, feedback):
+        """Fluxo central de execução do algoritmo."""
+        
+        # Recuperação dos parâmetros
+        params = self._recuperar_parametros(parameters, context)
+        
+        # Listagem de arquivos
+        lista_arquivos = self._listar_arquivos(params['pasta'], feedback)
+        total_arquivos = len(lista_arquivos)
+
+        # Configuração inicial do relatório
+        buffer_relatorio = []
+        buffer_relatorio.append(self._criar_cabecalho(params, total_arquivos))
+
+        arquivos_reprovados = 0
+        arquivos_com_erro = 0
+
+        # Iteração de processamento com bloco try/except abrangente
+        for i, caminho_arquivo in enumerate(lista_arquivos):
+            if feedback.isCanceled():
+                break
+
+            feedback.setProgress(int((i / total_arquivos) * 100))
+            nome_arquivo = os.path.basename(caminho_arquivo)
+
+            try:
+                # O processamento da imagem retorna linhas para o relatório apenas se houver falha
+                resultado_inconformidade = self._processar_arquivo(caminho_arquivo, params)
+                
+                if resultado_inconformidade:
+                    buffer_relatorio.append(resultado_inconformidade)
+                    arquivos_reprovados += 1
+                    
+            except IOError as e:
+                arquivos_com_erro += 1
+                erro_msg = f"[!] ERRO DE LEITURA (CORROMPIDO) - {nome_arquivo} | {str(e)}"
+                buffer_relatorio.append(erro_msg)
+                feedback.reportError(self.tr(f"Erro de I/O na imagem {nome_arquivo}: {e}"))
+                
+            except Exception as e:
+                arquivos_com_erro += 1
+                erro_msg = f"[!] ERRO CRÍTICO - {nome_arquivo} | Exceção: {str(e)}"
+                buffer_relatorio.append(erro_msg)
+                feedback.reportError(self.tr(f"Exceção inesperada na imagem {nome_arquivo}: {e}"))
+
+        # Rodapé do relatório e gravação
+        buffer_relatorio.insert(10, f"  • Imagens Reprovadas/Corrompidas: {arquivos_reprovados + arquivos_com_erro}")
+        buffer_relatorio.insert(11, f"  • Imagens Aprovadas: {total_arquivos - arquivos_reprovados - arquivos_com_erro}")
+        buffer_relatorio.insert(12, "=" * 80)
+        buffer_relatorio.insert(13, "\nLISTAGEM DE OCORRÊNCIAS:\n")
+        
+        if arquivos_reprovados == 0 and arquivos_com_erro == 0:
+            buffer_relatorio.append("✓ Nenhuma inconformidade de transbordamento espectral encontrada.")
+
+        self._escrever_relatorio(params['arquivo_saida'], buffer_relatorio)
+
+        feedback.pushInfo(self.tr(f"✓ Processamento concluído. Analisados: {total_arquivos} arquivo(s)."))
+
+        return {self.OUTPUT_REPORT: params['arquivo_saida']}
+
+    # =========================================================================
+    # MÉTODOS AUXILIARES
+    # =========================================================================
+
+    def _recuperar_parametros(self, parameters, context):
+        """Organiza os parâmetros de entrada convertendo os índices da interface para valores inteiros."""
+        idx_bloco = self.parameterAsEnum(parameters, self.BLOCK_SIZE, context)
+        idx_passo = self.parameterAsEnum(parameters, self.STEP_SIZE, context)
+        
+        return {
+            'pasta': self.parameterAsString(parameters, self.INPUT_FOLDER, context),
+            'arquivo_saida': self.parameterAsString(parameters, self.OUTPUT_REPORT, context),
+            'bloco': self.VALORES_BLOCO[idx_bloco],
+            'passo': self.VALORES_PASSO[idx_passo]
+        }
+
+    def _listar_arquivos(self, pasta, feedback):
+        """Lista as fotos TIFF/GeoTIFF da pasta e subpastas de forma recursiva."""
+        extensoes = ("*.tif", "*.tiff", "*.TIF", "*.TIFF", "*.geotiff", "*.gtif")
+        arquivos = []
+        for ext in extensoes:
+            caminho_pesquisa = os.path.join(pasta, "**", ext)
+            arquivos.extend(glob.glob(caminho_pesquisa, recursive=True))
+            
+        arquivos = sorted(list(set(arquivos)))
+        if not arquivos:
+            raise QgsProcessingException(self.tr(f"Nenhuma imagem compatível encontrada em: {pasta}"))
+            
+        return arquivos
+
+    def _criar_cabecalho(self, params, total):
+        """Gera o bloco superior do relatório em texto."""
+        linhas = [
+            "=" * 80,
+            self.tr("RELATÓRIO TÉCNICO: INSPEÇÃO DE TRANSBORDAMENTO ESPECTRAL"),
+            self.tr(f"Data/Hora: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"),
+            "=" * 80,
+            self.tr("PARÂMETROS DE EXECUÇÃO:"),
+            f"  • Diretório Alvo: {params['pasta']}",
+            f"  • Tamanho da Janela de Amostragem: {params['bloco']}x{params['bloco']} px",
+            f"  • Passo (Stride): {params['passo']} px",
+            f"  • Total de Imagens na Varredura: {total}",
+        ]
+        return "\n".join(linhas)
+
+    def _processar_arquivo(self, caminho_arquivo, params):
+        """
+        Realiza a leitura em blocos e aplica a lógica matricial.
+        Interrompe a varredura internamente na imagem ao achar a 1ª ocorrência para otimização,
+        mas o processamento do lote continua normalmente.
+        """
+        nome_arquivo = os.path.basename(caminho_arquivo)
+        pasta_origem = os.path.dirname(caminho_arquivo)
+        
+        gdal.UseExceptions()
+        dataset = gdal.Open(caminho_arquivo)
+        
+        if dataset is None:
+            raise IOError("Falha nativa do GDAL ao instanciar o arquivo.")
+
+        largura = dataset.RasterXSize
+        altura = dataset.RasterYSize
+        num_bandas = dataset.RasterCount
+        
+        if num_bandas < 3:
+            dataset = None
+            return f"[!] REPROVADO - {nome_arquivo} | Pasta: {pasta_origem} | Motivo: Arquivo possui menos de 3 bandas espectrais."
+
+        tamanho_bloco = params['bloco']
+        passo = params['passo']
+        
+        diagnostico_erro = None
+
+        for y in range(0, altura, passo):
+            if diagnostico_erro: 
+                break
+                
+            for x in range(0, largura, passo):
+                largura_janela = min(tamanho_bloco, largura - x)
+                altura_janela = min(tamanho_bloco, altura - y)
+                
+                bloco_dados = dataset.ReadAsArray(x, y, largura_janela, altura_janela)
+                
+                if bloco_dados is not None and len(bloco_dados.shape) == 3:
+                    
+                    bloco_rgb = bloco_dados[:3, :, :]
+                    mascara_zeros = (bloco_rgb == 0)
+                    contagem_zeros_pixel = np.sum(mascara_zeros, axis=0)
+                    
+                    # Condição solicitada: o pixel deve possuir exatamente 1 ou 2 valores nulos
+                    pixels_inconformes = (contagem_zeros_pixel >= 1) & (contagem_zeros_pixel <= 2)
+                    
+                    if np.any(pixels_inconformes):
+                        idx_y, idx_x = np.where(pixels_inconformes)
+                        pos_x_global = x + idx_x[0]
+                        pos_y_global = y + idx_y[0]
+                        diagnostico_erro = f"Transbordamento identificado na posição global aproximada (X: {pos_x_global}, Y: {pos_y_global})."
+                        break
+
+        dataset = None 
+
+        if diagnostico_erro:
+            return f"[!] REPROVADO - {nome_arquivo} | Pasta: {pasta_origem} | Diagnóstico: {diagnostico_erro}"
+            
+        return None
+
+    def _escrever_relatorio(self, caminho_saida, buffer):
+        """Persiste as informações processadas no arquivo TXT final."""
+        try:
+            with open(caminho_saida, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(buffer))
+        except IOError as e:
+            raise QgsProcessingException(self.tr(f"Erro ao escrever o arquivo de saída do relatório: {str(e)}"))
