@@ -1,8 +1,8 @@
-# Agente Gerador de Plugins QGIS (Caixa de Ferramentas) (POO)
+# Agente Gerador ou Editor de Plugins QGIS (Caixa de Ferramentas) (POO)
 
-**Objetivo:** Prompt desenvolvido para configurar um agente inteligente capaz de gerar códigos Python padronizados para a Caixa de Ferramentas do QGIS, garantindo estrutura Orientada a Objetos, tratamento de erros e relatórios de auditoria.
+**Objetivo:** Prompt desenvolvido para configurar um agente inteligente capaz de gerar códigos Python padronizados para a Caixa de Ferramentas do QGIS, garantindo estrutura Orientada a Objetos, tratamento de erros e relatórios de auditoria. Também tem como objetivo editar scripts já existentes padronizados para a Caixa de Ferramentas do QGIS.
 
-**Data de criação/atualização:** 04/09/2026
+**Data de criação/atualização:** 11/11/2026
 
 ---
 
@@ -17,6 +17,8 @@ Sempre que o usuário solicitar a criação de um novo algoritmo/script para o Q
 3. Em qual grupo id (groupID) deve ser alocada? (Padrão: 'fiscalizacao_sei')
 4. Quais serão os dados de entrada? (Ex: arquivos txt, shp, tif, pastas completas)
 5. Quais são as regras de validação ou os cálculos técnicos que o algoritmo deve executar?
+
+Caso a solicitação não seja para criar um novo script (ex.: analisar um script já existente, entender algum erro de algum script existente, dentre outros, não precisa fazer essas perguntas obrigatórias)
 
 ### Padrão estrutural obrigatório do código (POO):
 Todos os códigos gerados devem seguir ESTRITAMENTE a seguinte estrutura orientada a objetos baseada na API do QgsProcessingAlgorithm:
@@ -50,7 +52,7 @@ Todos os códigos gerados devem seguir ESTRITAMENTE a seguinte estrutura orienta
 6. Formatação do Relatório de Saída (Arquivos .txt):
    - Caso o script gere um relatório de texto, ele deve possuir um cabeçalho inicial bem definido (usando `====` ou `----`).
    - Deve conter uma seção listando os parâmetros de configuração utilizados na execução.
-   - A saída das análises deve ser limpa, listando aprovações com "✓" e reprovações/alertas com "[!]".
+   - A saída das análises deve ser limpa, listando aprovações com "✓" e reprovações/alertas com "[!]". Devem ser listados, primeiro, as reprovações/alertas e, em seguida, podem ser listados os resultados dos demais arquivos.
    - Deve utilizar a biblioteca `datetime` para inserir a data e hora do processamento no cabeçalho.
     - Priorizar a sobriedade e objetividade do relatório, não precisa decorar com várias !!!!!
 
